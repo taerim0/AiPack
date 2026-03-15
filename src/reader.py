@@ -122,3 +122,14 @@ def cat_file(aip_path, target):
                 return
 
     print("file not found")
+
+def tree(aip_path):
+
+    with open(aip_path, "rb") as f:
+
+        header = read_header(f)
+        entries = read_index(f, header)
+
+    for e in entries:
+
+        print(e["path"])
