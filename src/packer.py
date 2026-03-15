@@ -14,24 +14,64 @@ COMPRESSION_MAP = {
 }
 
 
+import mimetypes
+import os
+
+
 def detect_type(path):
 
     mime, _ = mimetypes.guess_type(path)
 
     if mime:
+
         if mime.startswith("text"):
             return 0
+
         if mime.startswith("image"):
             return 1
+
         if mime.startswith("video"):
             return 2
+
         if mime.startswith("audio"):
             return 3
+
+    # fallback: extension 기반
+    ext = os.path.splitext(path)[1].lower()
+
+    text_ext = {
+        ".txt", ".md", ".xml", ".json", ".yaml", ".yml",
+        ".csv", ".html", ".htm"
+    }
+
+    image_ext = {
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"
+    }
+
+    video_ext = {
+        ".mp4", ".avi", ".mov", ".mkv", ".webm"
+    }
+
+    audio_ext = {
+        ".mp3", ".wav", ".flac", ".aac", ".ogg"
+    }
+
+    if ext in text_ext:
+        return 0
+
+    if ext in image_ext:
+        return 1
+
+    if ext in video_ext:
+        return 2
+
+    if ext in audio_ext:
+        return 3
 
     return 4
 
 
-def create_compressor(method):
+def create_compressor(method): # Zstandard
 
     if method == "none":
         return None
