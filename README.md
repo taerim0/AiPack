@@ -3,10 +3,17 @@
 
 
 확장?
+
 cli package
+
 compression
+
 streaming dataset
+
 multimodal dataset format?
+
 embedding
+
 vector search
+
 dataset versioning
