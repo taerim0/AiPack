@@ -94,6 +94,5 @@ class AIPDataset:
         return list(self.map.keys())
 
     def close(self):
-
         self.mm.close()
         self.f.close()
