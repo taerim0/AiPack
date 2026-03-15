@@ -93,6 +93,28 @@ def extract_file(aip, entry, output_folder, compression):
 
         out.write(data)
 
+def extract_one(aip_path, target, output_folder):
+
+    with open(aip_path, "rb") as f:
+
+        header = read_header(f)
+        entries = read_index(f, header)
+
+        for e in entries:
+
+            if e["path"] == target:
+
+                extract_file(
+                    f,
+                    e,
+                    output_folder,
+                    header["compression"]
+                )
+
+                print("extracted:", target)
+                return
+
+    print("file not found")
 
 def unpack(aip_path, output_folder):
 
