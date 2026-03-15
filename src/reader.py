@@ -78,3 +78,47 @@ def list_files(aip_path):
                 f'original={e["original_size"]} | '
                 f'offset={e["offset"]}'
             )
+
+def dataset_info(aip_path):
+
+    with open(aip_path, "rb") as f:
+
+        header = read_header(f)
+        entries = read_index(f, header)
+
+    print("\nDATASET INFO")
+    print("files:", len(entries))
+    print("compression:", header["compression"])
+
+    total = sum(e["original_size"] for e in entries)
+
+    print("total_size:", total)
+
+def cat_file(aip_path, target):
+
+    with open(aip_path, "rb") as f:
+
+        header = read_header(f)
+        entries = read_index(f, header)
+
+        for e in entries:
+
+            if e["path"] == target:
+
+                f.seek(e["offset"])
+
+                data = f.read(e["compressed_size"])
+
+                if header["compression"] == 1:
+
+                    import zstandard as zstd
+                    data = zstd.ZstdDecompressor().decompress(data)
+
+                try:
+                    print(data.decode())
+                except:
+                    print("binary file")
+
+                return
+
+    print("file not found")
