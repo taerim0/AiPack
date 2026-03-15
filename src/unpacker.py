@@ -43,19 +43,39 @@ def read_index(f, header):
         file_type = struct.unpack("<B", f.read(1))[0]
 
         offset = struct.unpack("<Q", f.read(8))[0]
-        size = struct.unpack("<Q", f.read(8))[0]
+
+        compressed_size = struct.unpack("<Q", f.read(8))[0]
+
+        original_size = struct.unpack("<Q", f.read(8))[0]
 
         entries.append({
             "path": path,
             "type": file_type,
             "offset": offset,
-            "size": size
+            "compressed_size": compressed_size,
+            "original_size": original_size
         })
 
     return entries
 
 
-def extract_file(aip, entry, output_folder):
+def decompress_data(data, compression):
+
+    if compression == 0:
+        return data
+
+    if compression == 1:
+
+        import zstandard as zstd
+
+        d = zstd.ZstdDecompressor()
+
+        return d.decompress(data)
+
+    raise ValueError("unsupported compression")
+
+
+def extract_file(aip, entry, output_folder, compression):
 
     target_path = os.path.join(output_folder, entry["path"])
 
@@ -63,20 +83,15 @@ def extract_file(aip, entry, output_folder):
 
     aip.seek(entry["offset"])
 
-    remaining = entry["size"]
+    compressed_size = entry["compressed_size"]
+
+    data = aip.read(compressed_size)
+
+    data = decompress_data(data, compression)
 
     with open(target_path, "wb") as out:
 
-        while remaining > 0:
-
-            chunk = aip.read(min(CHUNK_SIZE, remaining))
-
-            if not chunk:
-                break
-
-            out.write(chunk)
-
-            remaining -= len(chunk)
+        out.write(data)
 
 
 def unpack(aip_path, output_folder):
@@ -95,4 +110,9 @@ def unpack(aip_path, output_folder):
 
             print("extracting:", entry["path"])
 
-            extract_file(f, entry, output_folder)
+            extract_file(
+                f,
+                entry,
+                output_folder,
+                header["compression"]
+            )

@@ -41,13 +41,17 @@ def read_index(f, header):
         file_type = struct.unpack("<B", f.read(1))[0]
 
         offset = struct.unpack("<Q", f.read(8))[0]
-        size = struct.unpack("<Q", f.read(8))[0]
+
+        compressed_size = struct.unpack("<Q", f.read(8))[0]
+
+        original_size = struct.unpack("<Q", f.read(8))[0]
 
         entries.append({
             "path": path,
             "type": file_type,
             "offset": offset,
-            "size": size
+            "compressed_size": compressed_size,
+            "original_size": original_size
         })
 
     return entries
@@ -69,5 +73,8 @@ def list_files(aip_path):
         for e in entries:
 
             print(
-                f'{e["path"]} | type={e["type"]} | size={e["size"]} | offset={e["offset"]}'
+                f'{e["path"]} | type={e["type"]} | '
+                f'compressed={e["compressed_size"]} | '
+                f'original={e["original_size"]} | '
+                f'offset={e["offset"]}'
             )
