@@ -1,11 +1,11 @@
 import os
 import struct
 import mimetypes
+import json
 from tqdm import tqdm
 
 MAGIC = b"AIPK"
-VERSION = 1
-
+VERSION = 2
 CHUNK_SIZE = 1024 * 1024
 
 COMPRESSION_MAP = {
@@ -32,38 +32,21 @@ def detect_type(path):
         if mime.startswith("audio"):
             return 3
 
-    ext = os.path.splitext(path)[1].lower()
-
-    text_ext = {
-        ".txt", ".md", ".xml", ".json", ".yaml", ".yml",
-        ".csv", ".html", ".htm"
-    }
-
-    image_ext = {
-        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"
-    }
-
-    video_ext = {
-        ".mp4", ".avi", ".mov", ".mkv", ".webm"
-    }
-
-    audio_ext = {
-        ".mp3", ".wav", ".flac", ".aac", ".ogg"
-    }
-
-    if ext in text_ext:
-        return 0
-
-    if ext in image_ext:
-        return 1
-
-    if ext in video_ext:
-        return 2
-
-    if ext in audio_ext:
-        return 3
-
     return 4
+
+
+def create_compressor(method):
+
+    if method == "none":
+        return None
+
+    if method == "zstd":
+
+        import zstandard as zstd
+
+        return zstd.ZstdCompressor(level=3)
+
+    raise ValueError("unsupported compression")
 
 
 def scan_files(folder):
@@ -82,20 +65,26 @@ def scan_files(folder):
     return files
 
 
-def compress_data(data, method):
+def build_manifest(files):
 
-    if method == "none":
-        return data
+    samples = []
 
-    if method == "zstd":
+    for path, rel in files:
 
-        import zstandard as zstd
+        t = detect_type(rel)
 
-        compressor = zstd.ZstdCompressor(level=3)
+        if t == 1:  # image
 
-        return compressor.compress(data)
+            label = os.path.basename(os.path.dirname(rel))
 
-    raise ValueError("unsupported compression")
+            samples.append({
+                "image": rel,
+                "label": label
+            })
+
+    return {
+        "samples": samples
+    }
 
 
 def pack(folder, output, compression="none"):
@@ -107,65 +96,62 @@ def pack(folder, output, compression="none"):
 
     total_size = sum(os.path.getsize(p) for p, _ in files)
 
+    compressor = create_compressor(compression)
+
+    manifest = build_manifest(files)
+
     with open(output, "wb") as out:
 
         # HEADER
 
         out.write(MAGIC)
-
         out.write(struct.pack("<H", VERSION))
 
         compression_id = COMPRESSION_MAP[compression]
-
         out.write(struct.pack("<B", compression_id))
 
         out.write(struct.pack("<Q", len(files)))
 
         index_pos = out.tell()
+        out.write(b"\x00" * 16)
 
+        manifest_pos = out.tell()
         out.write(b"\x00" * 16)
 
         index = []
 
         progress = tqdm(total=total_size, unit="B", unit_scale=True)
 
-        # DATA SECTION
+        # DATA
 
         for path, rel in files:
 
             with open(path, "rb") as f:
 
-                raw = f.read()
+                data = f.read()
 
-            progress.update(len(raw))
+                offset = out.tell()
 
-            original_size = len(raw)
+                if compressor:
+                    data = compressor.compress(data)
 
-            data = compress_data(raw, compression)
+                out.write(data)
 
-            offset = out.tell()
-
-            out.write(data)
-
-            compressed_size = len(data)
+                size = len(data)
 
             file_type = detect_type(rel)
 
-            index.append((
-                rel,
-                file_type,
-                offset,
-                compressed_size,
-                original_size
-            ))
+            index.append((rel, file_type, offset, size))
+
+            progress.update(os.path.getsize(path))
 
         progress.close()
 
-        # INDEX SECTION
+        # INDEX
 
         index_offset = out.tell()
 
-        for rel, t, off, csize, osize in index:
+        for rel, t, off, size in index:
 
             p = rel.encode()
 
@@ -175,8 +161,19 @@ def pack(folder, output, compression="none"):
             out.write(struct.pack("<B", t))
 
             out.write(struct.pack("<Q", off))
-            out.write(struct.pack("<Q", csize))
-            out.write(struct.pack("<Q", osize))
+            out.write(struct.pack("<Q", size))
+
+        index_end = out.tell()
+
+        # MANIFEST
+
+        manifest_offset = out.tell()
+
+        manifest_bytes = json.dumps(manifest).encode()
+
+        out.write(manifest_bytes)
+
+        manifest_size = len(manifest_bytes)
 
         end = out.tell()
 
@@ -185,4 +182,9 @@ def pack(folder, output, compression="none"):
         out.seek(index_pos)
 
         out.write(struct.pack("<Q", index_offset))
-        out.write(struct.pack("<Q", end))
+        out.write(struct.pack("<Q", index_end))
+
+        out.seek(manifest_pos)
+
+        out.write(struct.pack("<Q", manifest_offset))
+        out.write(struct.pack("<Q", manifest_size))
