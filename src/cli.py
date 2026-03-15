@@ -3,6 +3,10 @@ import argparse
 from packer import pack
 from unpacker import unpack
 from reader import list_files
+from reader import dataset_info
+from reader import tree
+from reader import cat_file
+from unpacker import extract_one
 
 
 def main():
@@ -21,10 +25,29 @@ def main():
     list_parser = sub.add_parser("list")
     list_parser.add_argument("aip_file")
 
+    # info
+    info_parser = sub.add_parser("info")
+    info_parser.add_argument("aip_file")
+
+    # tree
+    tree_parser = sub.add_parser("tree")
+    tree_parser.add_argument("aip_file")
+
+    # cat
+    cat_parser = sub.add_parser("cat")
+    cat_parser.add_argument("aip_file")
+    cat_parser.add_argument("file_path")
+
     # extract
     extract_parser = sub.add_parser("extract")
     extract_parser.add_argument("aip_file")
     extract_parser.add_argument("output_folder")
+
+    # extract-one
+    extract_one_parser = sub.add_parser("extract-one")
+    extract_one_parser.add_argument("aip_file")
+    extract_one_parser.add_argument("file_path")
+    extract_one_parser.add_argument("output_folder")
 
     args = parser.parse_args()
 
@@ -40,10 +63,30 @@ def main():
 
         list_files(args.aip_file)
 
+    elif args.command == "info":
+
+        dataset_info(args.aip_file)
+
+    elif args.command == "tree":
+
+        tree(args.aip_file)
+
+    elif args.command == "cat":
+
+        cat_file(args.aip_file, args.file_path)
+
     elif args.command == "extract":
 
         unpack(
             args.aip_file,
+            args.output_folder
+        )
+
+    elif args.command == "extract-one":
+
+        extract_one(
+            args.aip_file,
+            args.file_path,
             args.output_folder
         )
 
