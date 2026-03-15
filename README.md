@@ -1,6 +1,8 @@
 # AiPack
 폴더와 내부 파일들을 single binary data로 (계층유지) -> ai가 읽기 쉽게
 
+아직은 파일 따로지정해주지 않으면 ai가 파일 하나만 읽고 분석안함..
+
 ```cpp
 // ### 폴더 패킹 ###
 python cli.py pack /* 패킹할 폴더 경로 */ /* 결과물 경로 및 파일명.aip */
