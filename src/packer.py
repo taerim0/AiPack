@@ -14,10 +14,6 @@ COMPRESSION_MAP = {
 }
 
 
-import mimetypes
-import os
-
-
 def detect_type(path):
 
     mime, _ = mimetypes.guess_type(path)
@@ -36,7 +32,6 @@ def detect_type(path):
         if mime.startswith("audio"):
             return 3
 
-    # fallback: extension 기반
     ext = os.path.splitext(path)[1].lower()
 
     text_ext = {
@@ -71,20 +66,6 @@ def detect_type(path):
     return 4
 
 
-def create_compressor(method): # Zstandard
-
-    if method == "none":
-        return None
-
-    if method == "zstd":
-
-        import zstandard as zstd
-
-        return zstd.ZstdCompressor(level=3).compressobj()
-
-    raise ValueError("unsupported compression")
-
-
 def scan_files(folder):
 
     files = []
@@ -101,6 +82,22 @@ def scan_files(folder):
     return files
 
 
+def compress_data(data, method):
+
+    if method == "none":
+        return data
+
+    if method == "zstd":
+
+        import zstandard as zstd
+
+        compressor = zstd.ZstdCompressor(level=3)
+
+        return compressor.compress(data)
+
+    raise ValueError("unsupported compression")
+
+
 def pack(folder, output, compression="none"):
 
     if compression not in COMPRESSION_MAP:
@@ -109,8 +106,6 @@ def pack(folder, output, compression="none"):
     files = scan_files(folder)
 
     total_size = sum(os.path.getsize(p) for p, _ in files)
-
-    compressor = create_compressor(compression)
 
     with open(output, "wb") as out:
 
@@ -140,30 +135,29 @@ def pack(folder, output, compression="none"):
 
             with open(path, "rb") as f:
 
-                offset = out.tell()
+                raw = f.read()
 
-                while True:
+            progress.update(len(raw))
 
-                    chunk = f.read(CHUNK_SIZE)
+            original_size = len(raw)
 
-                    if not chunk:
-                        break
+            data = compress_data(raw, compression)
 
-                    progress.update(len(chunk))
+            offset = out.tell()
 
-                    if compressor:
-                        chunk = compressor.compress(chunk)
+            out.write(data)
 
-                    out.write(chunk)
-
-                size = out.tell() - offset
+            compressed_size = len(data)
 
             file_type = detect_type(rel)
 
-            index.append((rel, file_type, offset, size))
-
-        if compressor:
-            out.write(compressor.flush())
+            index.append((
+                rel,
+                file_type,
+                offset,
+                compressed_size,
+                original_size
+            ))
 
         progress.close()
 
@@ -171,7 +165,7 @@ def pack(folder, output, compression="none"):
 
         index_offset = out.tell()
 
-        for rel, t, off, size in index:
+        for rel, t, off, csize, osize in index:
 
             p = rel.encode()
 
@@ -181,7 +175,8 @@ def pack(folder, output, compression="none"):
             out.write(struct.pack("<B", t))
 
             out.write(struct.pack("<Q", off))
-            out.write(struct.pack("<Q", size))
+            out.write(struct.pack("<Q", csize))
+            out.write(struct.pack("<Q", osize))
 
         end = out.tell()
 
