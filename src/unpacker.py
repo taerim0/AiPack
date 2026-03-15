@@ -96,11 +96,3 @@ def unpack(aip_path, output_folder):
             print("extracting:", entry["path"])
 
             extract_file(f, entry, output_folder)
-
-
-if __name__ == "__main__":
-
-    aip_path = "../result/pack/pack_result.aip"
-    output_folder = "../result/unpack"
-
-    unpack(aip_path, output_folder)

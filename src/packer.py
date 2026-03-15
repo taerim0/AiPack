@@ -191,11 +191,3 @@ def pack(folder, output, compression="none"):
 
         out.write(struct.pack("<Q", index_offset))
         out.write(struct.pack("<Q", end))
-
-if __name__ == "__main__":
-
-    pack(
-        "../testfiles",
-        "../result/pack/pack_result.aip",
-        compression="none"
-    )

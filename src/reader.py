@@ -71,10 +71,3 @@ def list_files(aip_path):
             print(
                 f'{e["path"]} | type={e["type"]} | size={e["size"]} | offset={e["offset"]}'
             )
-
-
-if __name__ == "__main__":
-
-    aip_file = "../result/pack/pack_result.aip"
-
-    list_files(aip_file)
