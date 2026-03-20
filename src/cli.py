@@ -1,99 +1,109 @@
 import argparse
-
+from reader import AIPKReader
 from packer import pack
-from unpacker import unpack
-from reader import list_files
-from reader import dataset_info
-from reader import tree
-from reader import cat_file
-from unpacker import extract_one
+
+
+def print_tree(d, prefix=""):
+    for k, v in d.items():
+        print(prefix + k)
+        print_tree(v, prefix + "  ")
+
+
+def cmd_pack(args):
+    pack(args.input, args.output)
+
+
+def cmd_list(args):
+    r = AIPKReader(args.file)
+    for p in r.list():
+        print(p)
+
+
+def cmd_info(args):
+    r = AIPKReader(args.file)
+    info = r.info()
+    print(f"files: {info['files']}")
+    print(f"total_size: {info['total_size']}")
+
+
+def cmd_tree(args):
+    r = AIPKReader(args.file)
+    tree = r.tree()
+    print_tree(tree)
+
+
+def cmd_cat(args):
+    r = AIPKReader(args.file)
+    data = r.cat(args.path)
+    try:
+        print(data.decode("utf-8"))
+    except:
+        print(data)
+
+
+def cmd_extract(args):
+    r = AIPKReader(args.file)
+    r.extract_all(args.output)
+
+
+def cmd_extract_one(args):
+    r = AIPKReader(args.file)
+    r.extract_one(args.path, args.output)
+
+
+def cmd_verify(args):
+    r = AIPKReader(args.file)
+    r.verify()
+    print("OK")
 
 
 def main():
+    parser = argparse.ArgumentParser("aipk")
+    sub = parser.add_subparsers(dest="cmd")
 
-    parser = argparse.ArgumentParser(prog="aip")
+    p = sub.add_parser("pack")
+    p.add_argument("input")
+    p.add_argument("output")
+    p.set_defaults(func=cmd_pack)
 
-    sub = parser.add_subparsers(dest="command")
+    p = sub.add_parser("list")
+    p.add_argument("file")
+    p.set_defaults(func=cmd_list)
 
-    # pack
-    pack_parser = sub.add_parser("pack")
-    pack_parser.add_argument("input_folder")
-    pack_parser.add_argument("output_file")
-    pack_parser.add_argument("--compression", default="none")
-    pack_parser.add_argument("--ai", action="store_true")  # 🔥 추가
+    p = sub.add_parser("info")
+    p.add_argument("file")
+    p.set_defaults(func=cmd_info)
 
-    # list
-    list_parser = sub.add_parser("list")
-    list_parser.add_argument("aip_file")
+    p = sub.add_parser("tree")
+    p.add_argument("file")
+    p.set_defaults(func=cmd_tree)
 
-    # info
-    info_parser = sub.add_parser("info")
-    info_parser.add_argument("aip_file")
+    p = sub.add_parser("cat")
+    p.add_argument("file")
+    p.add_argument("path")
+    p.set_defaults(func=cmd_cat)
 
-    # tree
-    tree_parser = sub.add_parser("tree")
-    tree_parser.add_argument("aip_file")
+    p = sub.add_parser("extract")
+    p.add_argument("file")
+    p.add_argument("output")
+    p.set_defaults(func=cmd_extract)
 
-    # cat
-    cat_parser = sub.add_parser("cat")
-    cat_parser.add_argument("aip_file")
-    cat_parser.add_argument("file_path")
+    p = sub.add_parser("extract-one")
+    p.add_argument("file")
+    p.add_argument("path")
+    p.add_argument("output")
+    p.set_defaults(func=cmd_extract_one)
 
-    # extract
-    extract_parser = sub.add_parser("extract")
-    extract_parser.add_argument("aip_file")
-    extract_parser.add_argument("output_folder")
-
-    # extract-one
-    extract_one_parser = sub.add_parser("extract-one")
-    extract_one_parser.add_argument("aip_file")
-    extract_one_parser.add_argument("file_path")
-    extract_one_parser.add_argument("output_folder")
+    # 🔥 추가 기능
+    p = sub.add_parser("verify")
+    p.add_argument("file")
+    p.set_defaults(func=cmd_verify)
 
     args = parser.parse_args()
 
-    if args.command == "pack":
-
-        pack(
-            args.input_folder,
-            args.output_file,
-            compression=args.compression,
-            ai_section=args.ai  # 🔥 추가
-        )
-
-    elif args.command == "list":
-
-        list_files(args.aip_file)
-
-    elif args.command == "info":
-
-        dataset_info(args.aip_file)
-
-    elif args.command == "tree":
-
-        tree(args.aip_file)
-
-    elif args.command == "cat":
-
-        cat_file(args.aip_file, args.file_path)
-
-    elif args.command == "extract":
-
-        unpack(
-            args.aip_file,
-            args.output_folder
-        )
-
-    elif args.command == "extract-one":
-
-        extract_one(
-            args.aip_file,
-            args.file_path,
-            args.output_folder
-        )
-
+    if hasattr(args, "func"):
+        args.func(args)
     else:
-
         parser.print_help()
 
 

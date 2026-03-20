@@ -1,135 +1,144 @@
 import struct
+import zlib
+import os
 
 MAGIC = b"AIPK"
+VERSION = 1
+
+CHECKSUM_CRC32 = 1
+COMPRESSION_NONE = 0
 
 
-def read_header(f):
+class AIPKReader:
+    def __init__(self, path):
+        self.path = path
 
-    magic = f.read(4)
+    def _read_exact(self, f, n):
+        data = f.read(n)
+        if len(data) != n:
+            raise EOFError("Unexpected EOF")
+        return data
 
-    if magic != MAGIC:
-        raise ValueError("Not an AIP file")
+    def _scan(self):
+        with open(self.path, "rb") as f:
+            magic = self._read_exact(f, 4)
+            if magic != MAGIC:
+                raise ValueError("Invalid AIPK file")
 
-    version = struct.unpack("<H", f.read(2))[0]
-    compression = struct.unpack("<B", f.read(1))[0]
-    file_count = struct.unpack("<Q", f.read(8))[0]
+            version = struct.unpack("<H", self._read_exact(f, 2))[0]
+            if version != VERSION:
+                raise ValueError(f"Unsupported version: {version}")
 
-    index_offset = struct.unpack("<Q", f.read(8))[0]
-    index_end = struct.unpack("<Q", f.read(8))[0]
+            while True:
+                header = f.read(4)
+                if not header:
+                    break
 
-    return {
-        "version": version,
-        "compression": compression,
-        "file_count": file_count,
-        "index_offset": index_offset,
-        "index_end": index_end
-    }
+                if header != b"FILE":
+                    raise ValueError("Invalid block")
 
+                block_size = struct.unpack("<Q", self._read_exact(f, 8))[0]
+                block_start = f.tell()
 
-def read_index(f, header):
+                path_len = struct.unpack("<H", self._read_exact(f, 2))[0]
+                path = self._read_exact(f, path_len).decode("utf-8")
 
-    entries = []
+                file_type = struct.unpack("<B", self._read_exact(f, 1))[0]
+                compression = struct.unpack("<B", self._read_exact(f, 1))[0]
 
-    f.seek(header["index_offset"])
+                original_size = struct.unpack("<Q", self._read_exact(f, 8))[0]
+                compressed_size = struct.unpack("<Q", self._read_exact(f, 8))[0]
 
-    while f.tell() < header["index_end"]:
+                checksum_type = struct.unpack("<B", self._read_exact(f, 1))[0]
+                checksum_size = struct.unpack("<B", self._read_exact(f, 1))[0]
+                checksum = self._read_exact(f, checksum_size)
 
-        path_len = struct.unpack("<H", f.read(2))[0]
+                data_offset = f.tell()
+                data = self._read_exact(f, compressed_size)
 
-        path = f.read(path_len).decode()
+                yield {
+                    "path": path,
+                    "type": file_type,
+                    "compression": compression,
+                    "original_size": original_size,
+                    "compressed_size": compressed_size,
+                    "checksum_type": checksum_type,
+                    "checksum": checksum,
+                    "data": data,
+                }
 
-        file_type = struct.unpack("<B", f.read(1))[0]
+                f.seek(block_start + block_size)
 
-        offset = struct.unpack("<Q", f.read(8))[0]
+    def list(self):
+        return [entry["path"] for entry in self._scan()]
 
-        compressed_size = struct.unpack("<Q", f.read(8))[0]
+    def info(self):
+        total_files = 0
+        total_size = 0
 
-        original_size = struct.unpack("<Q", f.read(8))[0]
+        for entry in self._scan():
+            total_files += 1
+            total_size += entry["original_size"]
 
-        entries.append({
-            "path": path,
-            "type": file_type,
-            "offset": offset,
-            "compressed_size": compressed_size,
-            "original_size": original_size
-        })
+        return {
+            "files": total_files,
+            "total_size": total_size,
+        }
 
-    return entries
+    def tree(self):
+        tree = {}
+        for path in self.list():
+            parts = path.split("/")
+            cur = tree
+            for p in parts:
+                cur = cur.setdefault(p, {})
+        return tree
 
+    def cat(self, target):
+        for entry in self._scan():
+            if entry["path"] == target:
+                return self._decode_and_verify(entry)
+        raise FileNotFoundError(target)
 
-def list_files(aip_path):
+    def extract_all(self, output_dir):
+        for entry in self._scan():
+            out_path = os.path.join(output_dir, entry["path"])
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
-    with open(aip_path, "rb") as f:
+            data = self._decode_and_verify(entry)
 
-        header = read_header(f)
+            with open(out_path, "wb") as f:
+                f.write(data)
 
-        print("\nHEADER")
-        print(header)
-
-        entries = read_index(f, header)
-
-        print("\nFILES")
-
-        for e in entries:
-
-            print(
-                f'{e["path"]} | type={e["type"]} | '
-                f'compressed={e["compressed_size"]} | '
-                f'original={e["original_size"]} | '
-                f'offset={e["offset"]}'
-            )
-
-def dataset_info(aip_path):
-
-    with open(aip_path, "rb") as f:
-
-        header = read_header(f)
-        entries = read_index(f, header)
-
-    print("\nDATASET INFO")
-    print("files:", len(entries))
-    print("compression:", header["compression"])
-
-    total = sum(e["original_size"] for e in entries)
-
-    print("total_size:", total)
-
-def cat_file(aip_path, target):
-
-    with open(aip_path, "rb") as f:
-
-        header = read_header(f)
-        entries = read_index(f, header)
-
-        for e in entries:
-
-            if e["path"] == target:
-
-                f.seek(e["offset"])
-
-                data = f.read(e["compressed_size"])
-
-                if header["compression"] == 1:
-
-                    import zstandard as zstd
-                    data = zstd.ZstdDecompressor().decompress(data)
-
-                try:
-                    print(data.decode())
-                except:
-                    print("binary file")
-
+    def extract_one(self, target, output_path):
+        for entry in self._scan():
+            if entry["path"] == target:
+                data = self._decode_and_verify(entry)
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(data)
                 return
+        raise FileNotFoundError(target)
 
-    print("file not found")
+    def verify(self):
+        for entry in self._scan():
+            self._decode_and_verify(entry)
+        return True
 
-def tree(aip_path):
+    def _decode_and_verify(self, entry):
+        data = entry["data"]
 
-    with open(aip_path, "rb") as f:
+        # (현재 압축 없음)
+        if entry["compression"] == COMPRESSION_NONE:
+            decoded = data
+        else:
+            raise NotImplementedError("Compression not supported yet")
 
-        header = read_header(f)
-        entries = read_index(f, header)
+        # 🔥 ORIGINAL 기준 checksum 검증
+        if entry["checksum_type"] == CHECKSUM_CRC32:
+            calc = zlib.crc32(decoded) & 0xffffffff
+            stored = struct.unpack("<I", entry["checksum"])[0]
+            if calc != stored:
+                raise ValueError(f"Checksum mismatch: {entry['path']}")
 
-    for e in entries:
-
-        print(e["path"])
+        return decoded
