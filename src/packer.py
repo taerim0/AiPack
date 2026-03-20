@@ -87,7 +87,7 @@ def build_manifest(files):
     }
 
 
-def pack(folder, output, compression="none"):
+def pack(folder, output, compression="none", ai_section=False):
 
     if compression not in COMPRESSION_MAP:
         raise ValueError("invalid compression")
@@ -180,11 +180,45 @@ def pack(folder, output, compression="none"):
         # PATCH HEADER
 
         out.seek(index_pos)
-
         out.write(struct.pack("<Q", index_offset))
         out.write(struct.pack("<Q", index_end))
 
         out.seek(manifest_pos)
-
         out.write(struct.pack("<Q", manifest_offset))
         out.write(struct.pack("<Q", manifest_size))
+
+        # =========================
+        # 🔥 AI SECTION (추가 부분)
+        # =========================
+
+        if ai_section:
+
+            out.seek(0, 2)  # EOF
+
+            out.write(b"\n---AIP-AI-BEGIN---\n")
+            out.write(b"@AIP-AI-V1\n\n")
+
+            # TREE
+            out.write(b"@tree\n")
+            for rel, _, _, _ in index:
+                out.write(rel.encode() + b"\n")
+
+            out.write(b"\n")
+
+            # FILE CONTENT
+            for path, rel in files:
+
+                out.write(f"@file {rel}\n".encode())
+
+                with open(path, "rb") as f:
+                    data = f.read()
+
+                    try:
+                        text = data.decode()
+                        out.write(text.encode())
+                    except:
+                        out.write(b"[BINARY]\n")
+
+                out.write(b"\n")
+
+            out.write(b"\n---AIP-AI-END---\n")

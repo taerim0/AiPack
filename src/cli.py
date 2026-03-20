@@ -20,6 +20,7 @@ def main():
     pack_parser.add_argument("input_folder")
     pack_parser.add_argument("output_file")
     pack_parser.add_argument("--compression", default="none")
+    pack_parser.add_argument("--ai", action="store_true")  # 🔥 추가
 
     # list
     list_parser = sub.add_parser("list")
@@ -56,7 +57,8 @@ def main():
         pack(
             args.input_folder,
             args.output_file,
-            compression=args.compression
+            compression=args.compression,
+            ai_section=args.ai  # 🔥 추가
         )
 
     elif args.command == "list":
