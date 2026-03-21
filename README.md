@@ -4,24 +4,34 @@
 <details>
 <summary><strong>📦 v1</strong></summary>
 
+
 index 기반
 
 - 중앙 index(JSON) → 전체 파일 메타데이터 포함
 - offset 기반 랜덤 접근
+
 compression
+
 - zstd 압축
 - 근데 압축하면 ai가 못 읽음
+
 checksum
+
 - SHA-256 checksum
 - 원본 기준 검증 (압축 여부와 무관)
+
 mmap 기반 reader
+
 - zero-copy 접근
+
 manifest
+
 - 이거 있어야 ai가 단일파일로 인식 x 패킹 파일로 인식 o
 - 이거 때매 용량 몇 바이트 늘어나긴 함
 
 
 cli.py
+
 ```cpp
 // ### 폴더 패킹 ###
 python cli.py pack /* 패킹할 폴더 경로 */ /* 결과물 경로 및 파일명.aip */
@@ -58,27 +68,27 @@ python cli.py manifest /* aip 파일 */
 
 - streaming
 
-대용량 파일 chunk 읽기
+- - 대용량 파일 chunk 읽기
 
-partial decode
+- - partial decode
 
 - 병렬 처리
 
-extract 병렬화
+- - extract 병렬화
 
-dataset prefetch
+- - dataset prefetch
 
 - index 포맷 변경
 
-JSON → msgpack / binary
+- - JSON → msgpack / binary
 
-ultra-large archive 대응
+- - ultra-large archive 대응
 
 - remote dataset
 
-HTTP range 요청
+- - HTTP range 요청
 
-cloud dataset 직접 사용
+- - cloud dataset 직접 사용
 
 - PyTorch / ML 통합
 
@@ -86,7 +96,7 @@ cloud dataset 직접 사용
 class TorchDataset(AIPKDataset):
 ```
 
-바로 학습 데이터로 사용 가능
+- - 바로 학습 데이터로 사용 가능
 
 - incremental pack
 
@@ -101,6 +111,7 @@ class TorchDataset(AIPKDataset):
 - progress bar thread-safe
 
 - error 메시지 표준화
+
 </details>
 
 ## v1
