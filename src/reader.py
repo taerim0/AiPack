@@ -4,6 +4,7 @@ import zlib
 import os
 import hashlib
 import mmap
+import zstandard as zstd
 
 
 MAGIC = b"AIPK"
@@ -22,7 +23,8 @@ class AIPKReader:
         self._build_map()
         self._init_mmap()
 
-    # ---------------- init ----------------
+        # 🔥 zstd decoder 재사용
+        self._zstd_dctx = zstd.ZstdDecompressor()
 
     def _read_exact(self, f, n):
         data = f.read(n)
@@ -64,8 +66,6 @@ class AIPKReader:
             self.mm = None
             self._file = None
 
-    # ---------------- basic ----------------
-
     def list(self):
         return list(self._map.keys())
 
@@ -74,17 +74,6 @@ class AIPKReader:
             "files": len(self.index),
             "total_size": sum(e["original_size"] for e in self.index),
         }
-
-    def tree(self):
-        tree = {}
-        for path in self.list():
-            parts = path.split("/")
-            cur = tree
-            for p in parts:
-                cur = cur.setdefault(p, {})
-        return tree
-
-    # ---------------- core ----------------
 
     def _read_raw(self, entry):
         start = self.data_offset + entry["offset"]
@@ -98,15 +87,18 @@ class AIPKReader:
                 return f.read(entry["size"])
 
     def _decode(self, entry, data):
-        if entry["compression"] == "zlib":
+        comp = entry["compression"]
+
+        if comp == "zlib":
             return zlib.decompress(data)
+
+        if comp == "zstd":
+            return self._zstd_dctx.decompress(data)
+
         return data
 
     def _verify(self, entry, data):
         if not self.verify_enabled:
-            return
-
-        if "checksum" not in entry:
             return
 
         calc = hashlib.sha256(data).hexdigest()
@@ -124,11 +116,8 @@ class AIPKReader:
         self._verify(entry, data)
         return data
 
-    # ---------------- API ----------------
-
     def cat(self, path):
-        entry = self._get_entry(path)
-        return self._load_entry(entry)
+        return self._load_entry(self._get_entry(path))
 
     def extract_all(self, output_dir):
         for entry in self.index:
@@ -142,7 +131,6 @@ class AIPKReader:
 
     def extract_one(self, path, output_path):
         entry = self._get_entry(path)
-
         data = self._load_entry(entry)
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -155,23 +143,11 @@ class AIPKReader:
         return True
 
     def get_manifest(self):
-        if self._manifest is not None:
+        if self._manifest:
             return self._manifest
-
         try:
             data = self.cat("__manifest__.json")
             self._manifest = json.loads(data.decode("utf-8"))
             return self._manifest
         except Exception:
             return None
-
-    # ---------------- cleanup ----------------
-
-    def close(self):
-        if self.mm:
-            self.mm.close()
-        if self._file:
-            self._file.close()
-
-    def __del__(self):
-        self.close()

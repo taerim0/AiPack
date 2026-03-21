@@ -4,12 +4,11 @@ import struct
 import sys
 import hashlib
 import zlib
+import zstandard as zstd
 
 MAGIC = b"AIPK"
 VERSION = 2
 
-
-# ---------------- utils ----------------
 
 def collect_files(input_dir):
     file_list = []
@@ -27,13 +26,18 @@ def sha256(data):
 
 def compress_data(data, method):
     if method == "zlib":
-        compressed = zlib.compress(data)
-        if len(compressed) < len(data):
-            return compressed, "zlib"
+        comp = zlib.compress(data)
+        if len(comp) < len(data):
+            return comp, "zlib"
+
+    elif method == "zstd":
+        cctx = zstd.ZstdCompressor(level=3)
+        comp = cctx.compress(data)
+        if len(comp) < len(data):
+            return comp, "zstd"
+
     return data, "none"
 
-
-# ---------------- progress bar ----------------
 
 def print_progress(i, total, path, bar_width=30):
     ratio = i / total
@@ -47,8 +51,6 @@ def print_progress(i, total, path, bar_width=30):
     sys.stdout.flush()
 
 
-# ---------------- pack ----------------
-
 def pack(input_dir, output_file, compression="none"):
     files = collect_files(input_dir)
     total_files = len(files)
@@ -58,7 +60,6 @@ def pack(input_dir, output_file, compression="none"):
 
     print(f"Packing {total_files} files...")
 
-    # 1. 파일 처리
     for i, (rel_path, full_path) in enumerate(files, 1):
         print_progress(i, total_files, rel_path)
 
@@ -81,7 +82,6 @@ def pack(input_dir, output_file, compression="none"):
 
     print("\nBuilding manifest...")
 
-    # 2. manifest
     manifest = {
         "type": "AIPK_ARCHIVE",
         "version": VERSION,
@@ -116,27 +116,20 @@ def pack(input_dir, output_file, compression="none"):
     file_entries.insert(0, manifest_entry)
     data_blocks.insert(0, m_data)
 
-    # 3. offset 계산
     offset = 0
     for entry, data in zip(file_entries, data_blocks):
         entry["offset"] = offset
         offset += len(data)
 
-    # 4. index 생성
     index_json = json.dumps(
         file_entries, indent=2, ensure_ascii=False
     ).encode("utf-8")
 
-    index_size = len(index_json)
-
-    print("Writing archive...")
-
-    # 5. 파일 쓰기
     with open(output_file, "wb") as f:
         f.write(MAGIC)
         f.write(struct.pack("<H", VERSION))
 
-        f.write(struct.pack("<I", index_size))
+        f.write(struct.pack("<I", len(index_json)))
         f.write(index_json)
 
         for data in data_blocks:
