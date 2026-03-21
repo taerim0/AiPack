@@ -1,7 +1,11 @@
-# AiPack
+## AiPack
 폴더와 내부 파일들을 single binary data로 (계층유지) -> ai가 읽기 쉽게
 
+<details>
+<summary><strong>📦 v1</strong></summary>
+
 ### index 기반
+
 - 중앙 index(JSON) → 전체 파일 메타데이터 포함
 - offset 기반 랜덤 접근
 ### compression
@@ -17,7 +21,7 @@
 - 이거 때매 용량 몇 바이트 늘어나긴 함
 
 
-## cli.py
+### cli.py
 ```cpp
 // ### 폴더 패킹 ###
 python cli.py pack /* 패킹할 폴더 경로 */ /* 결과물 경로 및 파일명.aip */
@@ -50,7 +54,7 @@ python cli.py verify /* aip 파일 */
 python cli.py manifest /* aip 파일 */
 ```
 
-## 메모
+### 메모
 
 - streaming
 
@@ -97,3 +101,4 @@ class TorchDataset(AIPKDataset):
 - progress bar thread-safe
 
 - error 메시지 표준화
+</details>
