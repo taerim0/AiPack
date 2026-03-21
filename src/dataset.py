@@ -1,98 +1,65 @@
-import struct
 import mmap
-import zlib
+from reader import AIPKReader
 
-MAGIC = b"AIPK"
 
-class AIPDataset:
-
-    def __init__(self, path):
-
+class AIPKDataset:
+    def __init__(self, path, use_cache=True):
         self.path = path
-        self.f = open(path, "rb")
+        self.reader = AIPKReader(path)
+        self.use_cache = use_cache
 
-        # memory map
-        self.mm = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)
-
-        self.header = self._read_header()
-        self.entries = self._read_index()
-
-        self.map = {e["path"]: e for e in self.entries}
-
-    def _read_header(self):
-
-        mm = self.mm
-
-        magic = mm.read(4)
-
-        if magic != MAGIC:
-            raise ValueError("invalid AIP file")
-
-        version = struct.unpack("H", mm.read(2))[0]
-        compression = struct.unpack("B", mm.read(1))[0]
-        file_count = struct.unpack("Q", mm.read(8))[0]
-
-        index_offset = struct.unpack("Q", mm.read(8))[0]
-        index_end = struct.unpack("Q", mm.read(8))[0]
-
-        return {
-            "version": version,
-            "compression": compression,
-            "file_count": file_count,
-            "index_offset": index_offset,
-            "index_end": index_end,
+        # build index (path -> entry)
+        self.index = {
+            entry.path: entry
+            for entry in self.reader.entries
+            if getattr(entry, "file_type", 0) == 0  # skip directories if any
         }
 
-    def _read_index(self):
+        # optional cache
+        self.cache = {} if use_cache else None
 
-        mm = self.mm
-        mm.seek(self.header["index_offset"])
+        # optional mmap (future optimization)
+        try:
+            with open(path, "rb") as f:
+                self.mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        except Exception:
+            self.mm = None
 
-        entries = []
+    def __len__(self):
+        return len(self.index)
 
-        for _ in range(self.header["file_count"]):
+    def __contains__(self, key):
+        return key in self.index
 
-            path_len = struct.unpack("H", mm.read(2))[0]
-            path = mm.read(path_len).decode()
+    def keys(self):
+        return self.index.keys()
 
-            ftype = struct.unpack("B", mm.read(1))[0]
+    def get(self, path):
+        if path not in self.index:
+            raise KeyError(path)
 
-            offset = struct.unpack("Q", mm.read(8))[0]
-            size = struct.unpack("Q", mm.read(8))[0]
+        if self.use_cache and path in self.cache:
+            return self.cache[path]
 
-            entries.append({
-                "path": path,
-                "type": ftype,
-                "offset": offset,
-                "size": size
-            })
+        entry = self.index[path]
 
-        return entries
+        if getattr(entry, "file_type", 0) == 1:
+            raise IsADirectoryError(path)
 
-    def __getitem__(self, key):
+        data = self.reader.read_file(path)
 
-        entry = self.map[key]
-
-        start = entry["offset"]
-        end = start + entry["size"]
-
-        data = self.mm[start:end]
-
-        # compression
-        if self.header["compression"] == 1:
-            data = zlib.decompress(data)
+        if self.use_cache:
+            self.cache[path] = data
 
         return data
 
-    def __iter__(self):
+    def __getitem__(self, path):
+        return self.get(path)
 
-        for e in self.entries:
-            yield e["path"], self[e["path"]]
+    def iter_items(self):
+        for path in self.index:
+            yield path, self.get(path)
 
-    def list(self):
-
-        return list(self.map.keys())
-
-    def close(self):
-        self.mm.close()
-        self.f.close()
+    def get_text(self, path, encoding="utf-8"):
+        data = self.get(path)
+            return None
