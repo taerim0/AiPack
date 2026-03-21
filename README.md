@@ -4,24 +4,24 @@
 <details>
 <summary><strong>📦 v1</strong></summary>
 
-### index 기반
+index 기반
 
 - 중앙 index(JSON) → 전체 파일 메타데이터 포함
 - offset 기반 랜덤 접근
-### compression
+compression
 - zstd 압축
 - 근데 압축하면 ai가 못 읽음
-### checksum
+checksum
 - SHA-256 checksum
 - 원본 기준 검증 (압축 여부와 무관)
-### mmap 기반 reader
+mmap 기반 reader
 - zero-copy 접근
-### manifest
+manifest
 - 이거 있어야 ai가 단일파일로 인식 x 패킹 파일로 인식 o
 - 이거 때매 용량 몇 바이트 늘어나긴 함
 
 
-### cli.py
+cli.py
 ```cpp
 // ### 폴더 패킹 ###
 python cli.py pack /* 패킹할 폴더 경로 */ /* 결과물 경로 및 파일명.aip */
@@ -54,7 +54,7 @@ python cli.py verify /* aip 파일 */
 python cli.py manifest /* aip 파일 */
 ```
 
-### 메모
+메모
 
 - streaming
 
@@ -103,7 +103,7 @@ class TorchDataset(AIPKDataset):
 - error 메시지 표준화
 </details>
 
-## ### v1 ###
+## v1
 
 
 핵심기능이 뭔가 이상함.. 폴더 패킹하면 ai가 파일들 읽긴 읽는데 완벽하게 읽진 않음
