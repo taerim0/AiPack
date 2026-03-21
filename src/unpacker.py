@@ -1,140 +1,55 @@
 import os
-import struct
-
-MAGIC = b"AIPK"
-CHUNK_SIZE = 1024 * 1024
+from reader import AIPKReader
 
 
-def read_header(f):
+class AIPKUnpacker:
+    def __init__(self, path, skip_meta=False):
+        self.reader = AIPKReader(path)
+        self.skip_meta = skip_meta
 
-    magic = f.read(4)
+    def _safe_path(self, base, target):
+        full = os.path.normpath(os.path.join(base, target))
+        base = os.path.abspath(base)
+        full_abs = os.path.abspath(full)
 
-    if magic != MAGIC:
-        raise ValueError("Not a valid AIP file")
+        if not full_abs.startswith(base):
+            raise ValueError(f"Path traversal detected: {target}")
 
-    version = struct.unpack("<H", f.read(2))[0]
-    compression = struct.unpack("<B", f.read(1))[0]
-    file_count = struct.unpack("<Q", f.read(8))[0]
+        return full_abs
 
-    index_offset = struct.unpack("<Q", f.read(8))[0]
-    index_end = struct.unpack("<Q", f.read(8))[0]
+    def extract_all(self, out_dir):
+        for entry in self.reader.entries:
+            path = entry.path
 
-    return {
-        "version": version,
-        "compression": compression,
-        "file_count": file_count,
-        "index_offset": index_offset,
-        "index_end": index_end,
-    }
+            # skip meta files if requested
+            if self.skip_meta and path.startswith("__"):
+                continue
 
+            self._extract_entry(entry, out_dir)
 
-def read_index(f, header):
+    def extract_one(self, target_path, out_dir):
+        entry = None
+        for e in self.reader.entries:
+            if e.path == target_path:
+                entry = e
+                break
 
-    entries = []
+        if not entry:
+            raise FileNotFoundError(target_path)
 
-    f.seek(header["index_offset"])
+        self._extract_entry(entry, out_dir)
 
-    while f.tell() < header["index_end"]:
+    def _extract_entry(self, entry, out_dir):
+        safe_out = self._safe_path(out_dir, entry.path)
 
-        path_len = struct.unpack("<H", f.read(2))[0]
+        # directory support (future-proof)
+        if getattr(entry, "file_type", 0) == 1:
+            os.makedirs(safe_out, exist_ok=True)
+            return
 
-        path = f.read(path_len).decode()
+        data = self.reader.read_file(entry.path)
 
-        file_type = struct.unpack("<B", f.read(1))[0]
+        os.makedirs(os.path.dirname(safe_out), exist_ok=True)
 
-        offset = struct.unpack("<Q", f.read(8))[0]
-
-        compressed_size = struct.unpack("<Q", f.read(8))[0]
-
-        original_size = struct.unpack("<Q", f.read(8))[0]
-
-        entries.append({
-            "path": path,
-            "type": file_type,
-            "offset": offset,
-            "compressed_size": compressed_size,
-            "original_size": original_size
-        })
-
-    return entries
-
-
-def decompress_data(data, compression):
-
-    if compression == 0:
-        return data
-
-    if compression == 1:
-
-        import zstandard as zstd
-
-        d = zstd.ZstdDecompressor()
-
-        return d.decompress(data)
-
-    raise ValueError("unsupported compression")
-
-
-def extract_file(aip, entry, output_folder, compression):
-
-    target_path = os.path.join(output_folder, entry["path"])
-
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-
-    aip.seek(entry["offset"])
-
-    compressed_size = entry["compressed_size"]
-
-    data = aip.read(compressed_size)
-
-    data = decompress_data(data, compression)
-
-    with open(target_path, "wb") as out:
-
-        out.write(data)
-
-def extract_one(aip_path, target, output_folder):
-
-    with open(aip_path, "rb") as f:
-
-        header = read_header(f)
-        entries = read_index(f, header)
-
-        for e in entries:
-
-            if e["path"] == target:
-
-                extract_file(
-                    f,
-                    e,
-                    output_folder,
-                    header["compression"]
-                )
-
-                print("extracted:", target)
-                return
-
-    print("file not found")
-
-def unpack(aip_path, output_folder):
-
-    with open(aip_path, "rb") as f:
-
-        header = read_header(f)
-
-        print("HEADER:", header)
-
-        entries = read_index(f, header)
-
-        print("FILES:", len(entries))
-
-        for entry in entries:
-
-            print("extracting:", entry["path"])
-
-            extract_file(
-                f,
-                entry,
-                output_folder,
-                header["compression"]
-            )
+        with open(safe_out, "wb") as f:
+            f.write(data)
