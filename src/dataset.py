@@ -1,4 +1,7 @@
 import mmap
+import os
+import zlib
+import hashlib
 from reader import AIPKReader
 
 
@@ -8,22 +11,25 @@ class AIPKDataset:
         self.reader = AIPKReader(path)
         self.use_cache = use_cache
 
-        # build index (path -> entry)
+        # index (path -> entry)
         self.index = {
-            entry.path: entry
-            for entry in self.reader.entries
-            if getattr(entry, "file_type", 0) == 0  # skip directories if any
+            e["path"]: e
+            for e in self.reader.index
         }
 
-        # optional cache
+        # cache
         self.cache = {} if use_cache else None
 
-        # optional mmap (future optimization)
+        # mmap (핵심 최적화)
         try:
-            with open(path, "rb") as f:
-                self.mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            f = open(path, "rb")
+            self._file = f
+            self.mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
         except Exception:
             self.mm = None
+            self._file = None
+
+    # ---------------- basic ----------------
 
     def __len__(self):
         return len(self.index)
@@ -34,6 +40,34 @@ class AIPKDataset:
     def keys(self):
         return self.index.keys()
 
+    # ---------------- core ----------------
+
+    def _read_raw(self, entry):
+        start = self.reader.data_offset + entry["offset"]
+        end = start + entry["size"]
+
+        if self.mm:
+            return self.mm[start:end]
+        else:
+            with open(self.path, "rb") as f:
+                f.seek(start)
+                return f.read(entry["size"])
+
+    def _decode(self, entry, data):
+        if entry["compression"] == "zlib":
+            return zlib.decompress(data)
+        return data
+
+    def _verify(self, entry, data):
+        if "checksum" not in entry:
+            return
+
+        calc = hashlib.sha256(data).hexdigest()
+        if calc != entry["checksum"]:
+            raise ValueError(f"Checksum mismatch: {entry['path']}")
+
+    # ---------------- API ----------------
+
     def get(self, path):
         if path not in self.index:
             raise KeyError(path)
@@ -43,10 +77,9 @@ class AIPKDataset:
 
         entry = self.index[path]
 
-        if getattr(entry, "file_type", 0) == 1:
-            raise IsADirectoryError(path)
-
-        data = self.reader.read_file(path)
+        raw = self._read_raw(entry)
+        data = self._decode(entry, raw)
+        self._verify(entry, data)
 
         if self.use_cache:
             self.cache[path] = data
@@ -62,4 +95,18 @@ class AIPKDataset:
 
     def get_text(self, path, encoding="utf-8"):
         data = self.get(path)
+        try:
+            return data.decode(encoding)
+        except Exception:
             return None
+
+    # ---------------- cleanup ----------------
+
+    def close(self):
+        if self.mm:
+            self.mm.close()
+        if self._file:
+            self._file.close()
+
+    def __del__(self):
+        self.close()
