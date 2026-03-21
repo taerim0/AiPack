@@ -5,7 +5,7 @@ import os
 import hashlib
 
 MAGIC = b"AIPK"
-VERSION = 2
+VERSION = 1
 
 
 class AIPKReader:
