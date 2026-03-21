@@ -6,8 +6,10 @@ import hashlib
 import zlib
 
 MAGIC = b"AIPK"
-VERSION = 1
+VERSION = 2
 
+
+# ---------------- utils ----------------
 
 def collect_files(input_dir):
     file_list = []
@@ -19,12 +21,6 @@ def collect_files(input_dir):
     return file_list
 
 
-def print_progress(i, total, path):
-    percent = (i / total) * 100
-    sys.stdout.write(f"\r[{i}/{total}] {percent:.1f}% - {path}   ")
-    sys.stdout.flush()
-
-
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -33,9 +29,25 @@ def compress_data(data, method):
     if method == "zlib":
         compressed = zlib.compress(data)
         if len(compressed) < len(data):
-            return compressed, True
-    return data, False
+            return compressed, "zlib"
+    return data, "none"
 
+
+# ---------------- progress bar ----------------
+
+def print_progress(i, total, path, bar_width=30):
+    ratio = i / total
+    filled = int(bar_width * ratio)
+    bar = "#" * filled + "-" * (bar_width - filled)
+    percent = ratio * 100
+
+    sys.stdout.write(
+        f"\r[{bar}] {percent:6.2f}% ({i}/{total}) {path[:40]}"
+    )
+    sys.stdout.flush()
+
+
+# ---------------- pack ----------------
 
 def pack(input_dir, output_file, compression="none"):
     files = collect_files(input_dir)
@@ -46,7 +58,7 @@ def pack(input_dir, output_file, compression="none"):
 
     print(f"Packing {total_files} files...")
 
-    # 1. 파일 읽기 + 압축 + 체크섬
+    # 1. 파일 처리
     for i, (rel_path, full_path) in enumerate(files, 1):
         print_progress(i, total_files, rel_path)
 
@@ -54,27 +66,25 @@ def pack(input_dir, output_file, compression="none"):
             raw = f.read()
 
         checksum = sha256(raw)
+        data, comp = compress_data(raw, compression)
 
-        data, compressed_flag = compress_data(raw, compression)
-
-        entry = {
+        file_entries.append({
             "path": rel_path,
             "offset": 0,
             "size": len(data),
             "original_size": len(raw),
-            "compressed": compressed_flag,
-            "compression": compression if compressed_flag else "none",
+            "compression": comp,
             "checksum": checksum
-        }
+        })
 
-        file_entries.append(entry)
         data_blocks.append(data)
 
     print("\nBuilding manifest...")
 
+    # 2. manifest
     manifest = {
         "type": "AIPK_ARCHIVE",
-        "version": 2,
+        "version": VERSION,
         "file_count": len(file_entries),
         "total_size": sum(e["original_size"] for e in file_entries),
         "files": [
@@ -91,30 +101,28 @@ def pack(input_dir, output_file, compression="none"):
         manifest, indent=2, ensure_ascii=False
     ).encode("utf-8")
 
-    # manifest도 동일하게 처리
     m_checksum = sha256(manifest_bytes)
-    m_data, m_compressed = compress_data(manifest_bytes, compression)
+    m_data, m_comp = compress_data(manifest_bytes, compression)
 
     manifest_entry = {
         "path": "__manifest__.json",
         "offset": 0,
         "size": len(m_data),
         "original_size": len(manifest_bytes),
-        "compressed": m_compressed,
-        "compression": compression if m_compressed else "none",
+        "compression": m_comp,
         "checksum": m_checksum
     }
 
     file_entries.insert(0, manifest_entry)
     data_blocks.insert(0, m_data)
 
-    # 2. offset 계산
+    # 3. offset 계산
     offset = 0
     for entry, data in zip(file_entries, data_blocks):
         entry["offset"] = offset
         offset += len(data)
 
-    # 3. index 생성
+    # 4. index 생성
     index_json = json.dumps(
         file_entries, indent=2, ensure_ascii=False
     ).encode("utf-8")
@@ -123,7 +131,7 @@ def pack(input_dir, output_file, compression="none"):
 
     print("Writing archive...")
 
-    # 4. 파일 쓰기
+    # 5. 파일 쓰기
     with open(output_file, "wb") as f:
         f.write(MAGIC)
         f.write(struct.pack("<H", VERSION))
@@ -135,21 +143,3 @@ def pack(input_dir, output_file, compression="none"):
             f.write(data)
 
     print("Done.")
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("input")
-    parser.add_argument("output")
-    parser.add_argument(
-        "--compression",
-        choices=["none", "zlib"],
-        default="none",
-        help="compression method"
-    )
-
-    args = parser.parse_args()
-
-    pack(args.input, args.output, compression=args.compression)
