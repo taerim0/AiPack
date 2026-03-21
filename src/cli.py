@@ -1,4 +1,5 @@
 import argparse
+import os
 from reader import AIPKReader
 from packer import pack
 
@@ -92,7 +93,9 @@ def cmd_extract(args):
 
 def cmd_extract_one(args):
     r = AIPKReader(args.file)
-    r.extract_one(args.path, args.output)
+    filename = os.path.basename(args.path)
+    out_path = os.path.join(args.output, filename)
+    r.extract_one(args.path, out_path)
 
 
 def cmd_verify(args):
