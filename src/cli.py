@@ -21,7 +21,7 @@ def human_size(n):
 # -------- Commands --------
 
 def cmd_pack(args):
-    pack(args.input, args.output)
+    pack(args.input, args.output, compression=args.compression)
 
 
 def cmd_ls(args):
@@ -123,6 +123,12 @@ def main():
     p = sub.add_parser("pack", help="Pack folder into aipk")
     p.add_argument("input")
     p.add_argument("output")
+    p.add_argument(
+        "--compression",
+        choices=["none", "zlib"],
+        default="none",
+        help="compression method (default: none)"
+    )
     p.set_defaults(func=cmd_pack)
 
     # ls

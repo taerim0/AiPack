@@ -1,17 +1,17 @@
 import struct
+import json
 import zlib
 import os
+import hashlib
 
 MAGIC = b"AIPK"
-VERSION = 1
-
-CHECKSUM_CRC32 = 1
-COMPRESSION_NONE = 0
+VERSION = 2
 
 
 class AIPKReader:
     def __init__(self, path):
         self.path = path
+        self._load_index()
 
     def _read_exact(self, f, n):
         data = f.read(n)
@@ -19,7 +19,7 @@ class AIPKReader:
             raise EOFError("Unexpected EOF")
         return data
 
-    def _scan(self):
+    def _load_index(self):
         with open(self.path, "rb") as f:
             magic = self._read_exact(f, 4)
             if magic != MAGIC:
@@ -29,60 +29,23 @@ class AIPKReader:
             if version != VERSION:
                 raise ValueError(f"Unsupported version: {version}")
 
-            while True:
-                header = f.read(4)
-                if not header:
-                    break
+            index_size = struct.unpack("<I", self._read_exact(f, 4))[0]
+            index_json = self._read_exact(f, index_size)
 
-                if header != b"FILE":
-                    raise ValueError("Invalid block")
+            self.index = json.loads(index_json.decode("utf-8"))
 
-                block_size = struct.unpack("<Q", self._read_exact(f, 8))[0]
-                block_start = f.tell()
+            # data 영역 시작 위치
+            self.data_offset = f.tell()
 
-                path_len = struct.unpack("<H", self._read_exact(f, 2))[0]
-                path = self._read_exact(f, path_len).decode("utf-8")
-
-                file_type = struct.unpack("<B", self._read_exact(f, 1))[0]
-                compression = struct.unpack("<B", self._read_exact(f, 1))[0]
-
-                original_size = struct.unpack("<Q", self._read_exact(f, 8))[0]
-                compressed_size = struct.unpack("<Q", self._read_exact(f, 8))[0]
-
-                checksum_type = struct.unpack("<B", self._read_exact(f, 1))[0]
-                checksum_size = struct.unpack("<B", self._read_exact(f, 1))[0]
-                checksum = self._read_exact(f, checksum_size)
-
-                data_offset = f.tell()
-                data = self._read_exact(f, compressed_size)
-
-                yield {
-                    "path": path,
-                    "type": file_type,
-                    "compression": compression,
-                    "original_size": original_size,
-                    "compressed_size": compressed_size,
-                    "checksum_type": checksum_type,
-                    "checksum": checksum,
-                    "data": data,
-                }
-
-                f.seek(block_start + block_size)
+    # ---------------- basic ----------------
 
     def list(self):
-        return [entry["path"] for entry in self._scan()]
+        return [e["path"] for e in self.index]
 
     def info(self):
-        total_files = 0
-        total_size = 0
-
-        for entry in self._scan():
-            total_files += 1
-            total_size += entry["original_size"]
-
         return {
-            "files": total_files,
-            "total_size": total_size,
+            "files": len(self.index),
+            "total_size": sum(e["original_size"] for e in self.index),
         }
 
     def tree(self):
@@ -94,51 +57,75 @@ class AIPKReader:
                 cur = cur.setdefault(p, {})
         return tree
 
+    # ---------------- core read ----------------
+
+    def _read_entry(self, entry):
+        with open(self.path, "rb") as f:
+            f.seek(self.data_offset + entry["offset"])
+            data = self._read_exact(f, entry["size"])
+        return data
+
+    def _decode(self, entry, data):
+        if entry["compression"] == "zlib":
+            return zlib.decompress(data)
+        return data
+
+    def _verify(self, entry, data):
+        if "checksum" not in entry:
+            return
+
+        calc = hashlib.sha256(data).hexdigest()
+        if calc != entry["checksum"]:
+            raise ValueError(f"Checksum mismatch: {entry['path']}")
+
+    def _get_entry(self, path):
+        for e in self.index:
+            if e["path"] == path:
+                return e
+        raise FileNotFoundError(path)
+
+    # ---------------- API ----------------
+
     def cat(self, target):
-        for entry in self._scan():
-            if entry["path"] == target:
-                return self._decode_and_verify(entry)
-        raise FileNotFoundError(target)
+        entry = self._get_entry(target)
+        raw = self._read_entry(entry)
+        decoded = self._decode(entry, raw)
+        self._verify(entry, decoded)
+        return decoded
 
     def extract_all(self, output_dir):
-        for entry in self._scan():
+        for entry in self.index:
             out_path = os.path.join(output_dir, entry["path"])
             os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
-            data = self._decode_and_verify(entry)
+            raw = self._read_entry(entry)
+            decoded = self._decode(entry, raw)
+            self._verify(entry, decoded)
 
             with open(out_path, "wb") as f:
-                f.write(data)
+                f.write(decoded)
 
     def extract_one(self, target, output_path):
-        for entry in self._scan():
-            if entry["path"] == target:
-                data = self._decode_and_verify(entry)
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(data)
-                return
-        raise FileNotFoundError(target)
+        entry = self._get_entry(target)
+
+        raw = self._read_entry(entry)
+        decoded = self._decode(entry, raw)
+        self._verify(entry, decoded)
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(decoded)
 
     def verify(self):
-        for entry in self._scan():
-            self._decode_and_verify(entry)
+        for entry in self.index:
+            raw = self._read_entry(entry)
+            decoded = self._decode(entry, raw)
+            self._verify(entry, decoded)
         return True
 
-    def _decode_and_verify(self, entry):
-        data = entry["data"]
-
-        # (현재 압축 없음)
-        if entry["compression"] == COMPRESSION_NONE:
-            decoded = data
-        else:
-            raise NotImplementedError("Compression not supported yet")
-
-        # 🔥 ORIGINAL 기준 checksum 검증
-        if entry["checksum_type"] == CHECKSUM_CRC32:
-            calc = zlib.crc32(decoded) & 0xffffffff
-            stored = struct.unpack("<I", entry["checksum"])[0]
-            if calc != stored:
-                raise ValueError(f"Checksum mismatch: {entry['path']}")
-
-        return decoded
+    def get_manifest(self):
+        try:
+            data = self.cat("__manifest__.json")
+            return json.loads(data.decode("utf-8"))
+        except Exception:
+            return None
