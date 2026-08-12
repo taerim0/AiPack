@@ -1,2 +1,8 @@
 testfiles/
 result/
+
+
+
+venv/
+
+src/__pycache__/
