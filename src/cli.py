@@ -1,10 +1,15 @@
 import argparse
+import json
+from pathlib import Path
+
 from extractor import extract_signatures, extract_dependencies, extract_api, debug_tree
 from compressor import compress_file
 from collector import collect_files, print_tree
 from scanner import scan_files
-from tokenizer import analyze_tokens
+from tokenizer import analyze_tokens, analyze_tokens_with_compression
 from selector import select_files
+from llm import analyze_file_summary, analyze_rules, analyze_prompt
+
 
 def main():
     parser = argparse.ArgumentParser(description="AiPack v2")
@@ -33,6 +38,9 @@ def main():
 
     sel = sub.add_parser("select", help="파일 선택")
     sel.add_argument("path", help="프로젝트 폴더 경로")
+
+    an = sub.add_parser("analyze", help="LLM 분석")
+    an.add_argument("path", help="프로젝트 폴더 경로")
 
     args = parser.parse_args()
 
@@ -76,10 +84,13 @@ def main():
         scan_result = scan_files(files)
         safe_files = scan_result["safe"]
 
-        results, _ = analyze_tokens(safe_files)
+        results, _ = analyze_tokens_with_compression(safe_files)
         print(f"\n📊 토큰 분석 ({len(safe_files)}개 파일)\n")
         for model, data in results.items():
-            print(f"{model:10} : {data['tokens']:,} / {data['max']:,} ({data['percentage']}%) {data['bar']}")
+            print(f"{model}")
+            print(f"  압축 전: {data['original']:,} / {data['max']:,} {data['original_bar']}")
+            print(f"  압축 후: {data['compressed']:,} / {data['max']:,} {data['compressed_bar']}")
+            print(f"  절감:    {data['saved']:,} 토큰 ({data['saved_pct']}% 감소)\n")
 
     elif args.command == "select":
         files = collect_files(args.path)
@@ -92,5 +103,73 @@ def main():
                 print(f"  ❌ {f}")
 
         selected = select_files(safe_files, args.path)
+
+    elif args.command == "analyze":
+        # 1. 파일 수집
+        files = collect_files(args.path)
+        scan_result = scan_files(files)
+        safe_files = scan_result["safe"]
+
+        print(f"\n📁 분석 대상: {len(safe_files)}개 파일\n")
+
+        # 2. 파일별 분석
+        signatures_map = {}
+        summaries = {}
+
+        for file in safe_files:
+            sigs = extract_signatures(file)
+            deps = extract_dependencies(file)
+
+            if not sigs and not deps:
+                continue
+
+            print(f"  🔍 {Path(file).name} 분석 중...")
+            summary = analyze_file_summary(file, sigs, deps)
+            try:
+                summary_data = json.loads(summary)
+                summaries[file] = summary_data.get("summary", "분석 실패")
+            except json.JSONDecodeError:
+                summaries[file] = "분석 실패"
+
+            signatures_map[file] = sigs
+
+        # 3. 룰 추출
+        print(f"\n  📋 코딩 룰 추출 중...")
+        rules_response = analyze_rules(signatures_map)
+        try:
+            rules_data = json.loads(rules_response)
+        except json.JSONDecodeError:
+            rules_data = {"rules": []}
+
+        # 4. 프롬프트 생성
+        print(f"  ✍️  AI 가이드 생성 중...\n")
+        prompt_response = analyze_prompt(
+            project_name=Path(args.path).name,
+            architecture=[],
+            rules=rules_data["rules"]
+        )
+        try:
+            prompt_data = json.loads(prompt_response)
+        except json.JSONDecodeError:
+            prompt_data = {"prompt": "생성 실패"}
+
+        # 5. 결과 출력
+        print("=" * 50)
+        print("📄 파일별 Summary")
+        print("=" * 50)
+        for file, summary in summaries.items():
+            print(f"  {Path(file).name}: {summary}")
+
+        print("\n" + "=" * 50)
+        print("📋 코딩 룰")
+        print("=" * 50)
+        for rule in rules_data["rules"]:
+            print(f"  - {rule}")
+
+        print("\n" + "=" * 50)
+        print("✍️  AI 가이드")
+        print("=" * 50)
+        print(f"  {prompt_data['prompt']}")
+
 if __name__ == "__main__":
     main()
