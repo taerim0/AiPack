@@ -35,6 +35,18 @@ def extract_dependencies(file_path: str) -> list[str]:
     return results
 
 
+def extract_api(file_path: str) -> list[str]:
+    code = open(file_path, "r", encoding="utf-8").read()
+    parser = get_parser(file_path)
+    if not parser:
+        return []
+
+    tree = parser.parse(bytes(code, "utf8"))
+    results = []
+    _traverse_api(tree.root_node, results)
+    return results
+
+
 def _traverse_signatures(node, results: list, node_types: list):
     if node.type in node_types:
         name   = node.child_by_field_name("name")
@@ -53,15 +65,12 @@ def _traverse_signatures(node, results: list, node_types: list):
 
 
 def _traverse_dependencies(node, results: list):
-
-    # from userservice import UserService
     if node.type == "import_from_statement":
         module = node.child_by_field_name("module_name")
         if module:
             results.append(module.text.decode())
         return
 
-    # import authservice
     if node.type == "import_statement":
         for child in node.children:
             if child.type == "dotted_name":
@@ -70,3 +79,58 @@ def _traverse_dependencies(node, results: list):
 
     for child in node.children:
         _traverse_dependencies(child, results)
+
+
+def _traverse_api(node, results: list):
+    if node.type == "decorated_definition":
+        decorator = None
+        for child in node.children:
+            if child.type == "decorator":
+                decorator = child
+                break
+
+        if decorator:
+            method = None
+            path = None
+
+            for n in _walk(decorator):
+                if n.type == "attribute":
+                    attr_text = n.text.decode()
+                    if ".get"      in attr_text: method = "GET"
+                    elif ".post"   in attr_text: method = "POST"
+                    elif ".put"    in attr_text: method = "PUT"
+                    elif ".delete" in attr_text: method = "DELETE"
+                    elif ".patch"  in attr_text: method = "PATCH"
+                    break
+
+            for n in _walk(decorator):
+                if n.type == "string_content":
+                    path = n.text.decode()
+                    break
+
+            if method and path:
+                results.append(f"{method} {path}")
+        return
+
+    for child in node.children:
+        _traverse_api(child, results)
+
+
+def _walk(node):
+    yield node
+    for child in node.children:
+        yield from _walk(child)
+
+
+def debug_tree(file_path: str):
+    code = open(file_path, "r", encoding="utf-8").read()
+    parser = get_parser(file_path)
+    tree = parser.parse(bytes(code, "utf8"))
+    _print_tree(tree.root_node, 0)
+
+
+def _print_tree(node, depth: int):
+    indent = "  " * depth
+    print(f"{indent}{node.type}: {repr(node.text.decode()[:30])}")
+    for child in node.children:
+        _print_tree(child, depth + 1)
