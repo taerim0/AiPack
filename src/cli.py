@@ -11,10 +11,11 @@ from selector import select_files
 from llm import analyze_file_summary, analyze_rules, analyze_prompt
 from packager import pack, save_aif
 from corrector import correct_aif
+from relationship import build_tree, print_tree
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AiPack v2")
+    parser = argparse.ArgumentParser(description="Ziplex")
     sub = parser.add_subparsers(dest="command")
 
     c = sub.add_parser("compress", help="코드 압축")
@@ -48,6 +49,9 @@ def main():
     p.add_argument("path", help="프로젝트 폴더 경로")
     p.add_argument("--output", "-o", default="aif.json", help="출력 파일 경로")
     p.add_argument("--auto", action="store_true", help="파일 자동 선택")
+
+    tr = sub.add_parser("tree", help="의존성 트리 출력")
+    tr.add_argument("path", help="프로젝트 폴더 경로")
 
 
     args = parser.parse_args()
@@ -211,6 +215,19 @@ def main():
             print("=" * 50)
             for model, data in aif["tokens"].items():
                 print(f"  {model}: {data['original']} → {data['compressed']} ({data['saved_pct']}% 절감)")
+
+    elif args.command == "tree":
+        files = collect_files(args.path)
+        scan_result = scan_files(files)
+        safe_files = scan_result["safe"]
+
+        files_data = {}
+        for file_path in safe_files:
+            deps = extract_dependencies(file_path)
+            files_data[file_path] = {"dependencies": deps}
+
+        tree = build_tree(files_data)
+        print_tree(tree)
 
 if __name__ == "__main__":
     main()

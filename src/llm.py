@@ -98,3 +98,22 @@ JSON으로만 답해. 다른 말 하지 마.
 {{"prompt": "..."}}
 """
     return generate(prompt)
+
+def analyze_relationships(file_summaries: dict) -> str:
+    prompt = f"""
+아래 파일들의 이름과 요약을 보고
+파일 간의 관계를 추출해줘.
+JSON으로만 답해. 다른 말 하지 마.
+
+파일 목록:
+{file_summaries}
+
+아래 형식으로만 답해:
+{{
+  "relationships": {{
+    "파일A": ["관련파일B", "관련파일C"],
+    "파일B": ["관련파일A"]
+  }}
+}}
+"""
+    return generate(prompt)
