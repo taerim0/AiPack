@@ -9,7 +9,6 @@ from extractor import extract_signatures, extract_dependencies, extract_api
 from compressor import compress_file
 from tokenizer import analyze_tokens_with_compression
 from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analyze_prompt
-from relationship import build_tree, print_tree
 
 
 def pack(root_path: str, auto: bool = False) -> dict:
@@ -103,8 +102,6 @@ def pack(root_path: str, auto: bool = False) -> dict:
     except json.JSONDecodeError:
         rules = []
 
-    time.sleep(3)
-
     # 프롬프트 생성
     print("  ✍️  AI 가이드 생성 중...")
     prompt = ""
@@ -130,15 +127,12 @@ def pack(root_path: str, auto: bool = False) -> dict:
     token_results, _ = analyze_tokens_with_compression(selected)
 
     # 7. AIF.json 조립
-    tree = build_tree(files_data)
-
     aif = {
         "project": {
             "name": root.name,
             "prompt": prompt
         },
         "rules": rules,
-        "relationships": tree,
         "tokens": {
             model: {
                 "original": data["original"],

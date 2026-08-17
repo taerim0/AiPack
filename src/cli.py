@@ -186,10 +186,7 @@ def main():
     elif args.command == "pack":
         aif = pack(args.path, auto=args.auto)
         if aif:
-            # 사용자 보정
-            aif = correct_aif(aif)
-
-            # 저장
+            aif = correct_aif(aif)  # 보정 + relationships 생성
             save_aif(aif, args.output)
 
             print("\n" + "=" * 50)

@@ -2,6 +2,111 @@ import json
 from pathlib import Path
 
 
+def correct_relationships(aif: dict) -> dict:
+    print(f"\n🔗 파일 간 관계 수정")
+    print("(완료=q, 엔터=유지)\n")
+
+    files = list(aif["files"].keys())
+
+    def has_cycle(from_file: str, to_file: str) -> bool:
+        """to_file이 from_file의 조상인지 확인 (순환 참조 감지)"""
+        visited = set()
+        queue = [to_file]
+        while queue:
+            current = queue.pop()
+            if current == from_file:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            deps = aif["files"].get(current, {}).get("dependencies", [])
+            for dep in deps:
+                if dep in files:
+                    queue.append(dep)
+        return False
+
+    def print_current_tree():
+        all_children = set()
+        for name in files:
+            deps = aif["files"][name].get("dependencies", [])
+            for dep in deps:
+                if dep in files:
+                    all_children.add(dep)
+
+        def print_node(name, depth=1):
+            indent = "  " * depth
+            deps = aif["files"].get(name, {}).get("dependencies", [])
+            for dep in deps:
+                if dep in files:
+                    print(f"{indent}   └── 📄 {dep}")
+                    print_node(dep, depth + 1)
+                else:
+                    print(f"{indent}   └── 📦 {dep}")
+
+        for i, name in enumerate(files, 1):
+            if name in all_children:
+                continue
+            print(f"  [{i}] {name}")
+            print_node(name)
+
+    # 여러 번 수정 가능하게 루프
+    while True:
+        print_current_tree()
+        print("\n  이동할 파일 번호 (완료=q): ", end="")
+        move_input = input().strip()
+
+        if move_input.lower() == "q" or not move_input:
+            break
+
+        try:
+            move_idx = int(move_input) - 1
+            if move_idx < 0 or move_idx >= len(files):
+                print("  ⚠️  범위 초과")
+                continue
+
+            move_file = files[move_idx]
+
+            print(f"  [{move_file}] 을 어느 파일의 자식으로?")
+            print("  부모 파일 번호 (취소=q): ", end="")
+            parent_input = input().strip()
+
+            if parent_input.lower() == "q" or not parent_input:
+                continue
+
+            parent_idx = int(parent_input) - 1
+            if parent_idx < 0 or parent_idx >= len(files):
+                print("  ⚠️  범위 초과")
+                continue
+
+            parent_file = files[parent_idx]
+
+            if move_file == parent_file:
+                print("  ⚠️  같은 파일 선택 불가")
+                continue
+
+            # 순환 참조 감지
+            if has_cycle(move_file, parent_file):
+                print(f"  ⚠️  순환 참조 발생 → 이동 불가")
+                continue
+
+            # 기존 부모에서 제거
+            for name in files:
+                deps = aif["files"][name].get("dependencies", [])
+                if move_file in deps:
+                    deps.remove(move_file)
+
+            # 새 부모의 자식으로 추가
+            if "dependencies" not in aif["files"][parent_file]:
+                aif["files"][parent_file]["dependencies"] = []
+            aif["files"][parent_file]["dependencies"].append(move_file)
+
+            print(f"  ✅ {move_file} → {parent_file} 자식으로 이동\n")
+
+        except (ValueError, IndexError):
+            print("  ⚠️  잘못된 입력")
+
+    return aif
+
 def correct_aif(aif: dict) -> dict:
     print("\n" + "=" * 50)
     print("✏️  사용자 보정 (엔터 = 유지, 내용 입력 = 수정)")
@@ -51,6 +156,12 @@ def correct_aif(aif: dict) -> dict:
         new_summary = input("  수정 (엔터=유지): ").strip()
         if new_summary:
             aif["files"][file_name]["summary"] = new_summary
+
+    aif = correct_relationships(aif)
+
+    # 보정 완료 후 relationships 생성
+    from relationship import build_tree
+    aif["relationships"] = build_tree(aif["files"])
 
     print("\n✅ 보정 완료")
     return aif
