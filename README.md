@@ -1,8 +1,10 @@
-## Ziplex
+# Ziplex
 
 A tool that converts local projects into structured contexts that AI can understand instantly.
 
 ---
+
+## Features
 
 - Solves the problems that prevent AI from understanding projects
 
@@ -39,3 +41,17 @@ python src/cli.py pack ./your-project/ --auto
 # Specify output file
 python src/cli.py pack ./your-project/ -o output/aif.json
 ```
+
+## Roadmap
+
+**Selective File Delivery to AI**
+While working with AI on debugging or code review, users can select specific files directly from Ziplex and send them instantly — without copy-pasting. The AI receives not just the file content, but its full context from AIF.json: dependencies, signatures, and summary. One click, full context.
+
+**MCP Integration**
+Expose AIF.json as an MCP server so AI tools like Claude Code and Cursor can query project context on demand — automatically pulling the latest state without manual re-export.
+
+**Relationship Analysis Across All File Types**
+Extend dependency mapping beyond code files. Detect relationships between text, config, and binary files using LLM inference, building a complete picture of how every file connects.
+
+**Expanded Language Support**
+Broader Tree-sitter coverage for game-specific languages (GDScript, Lua, ZenScript) and additional frameworks, making Ziplex useful across more project types.
