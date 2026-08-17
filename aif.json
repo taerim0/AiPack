@@ -1,0 +1,50 @@
+{
+  "project": {
+    "name": "testfiles",
+    "prompt": "본 프로젝트('testfiles')는 엄격한 타입 안정성과 명확한 명명 규칙을 준수하는 코드베이스입니다. 모든 함수와 매개변수는 동사 기반의 snake_case 표기법을 사용하여 그 목적과 동작을 명확히 표현해야 합니다. 또한, 반환값(None 포함)을 비롯한 모든 매개변수에 명시적인 타입 힌트(Type Annotation) 작성이 필수적으로 요구됩니다."
+  },
+  "rules": [
+    "함수명은 snake_case 표기법을 사용한다.",
+    "모든 매개변수에는 명시적인 타입 힌트(Type Annotation)를 지정한다.",
+    "반환값이 없는 경우(None)를 포함하여 모든 함수의 반환 타입을 명시한다.",
+    "매개변수명은 snake_case 표기법을 사용하며 의미를 명확히 표현한다.",
+    "함수명은 동사 기반(get_user, login, logout 등)으로 동작을 명확히 명명한다."
+  ],
+  "tokens": {
+    "GPT-4o": {
+      "original": 105,
+      "compressed": 87,
+      "saved_pct": 17.1
+    },
+    "GPT-3.5": {
+      "original": 103,
+      "compressed": 88,
+      "saved_pct": 14.6
+    },
+    "GPT-4": {
+      "original": 103,
+      "compressed": 88,
+      "saved_pct": 14.6
+    }
+  },
+  "files": {
+    "test.py": {
+      "summary": "사용자 정보 조회 및 로그인/로그아웃 등 사용자 인증과 세션 관리를 처리하는 파일입니다.",
+      "signatures": [
+        "get_user(id: int) -> dict",
+        "login(email: str, password: str) -> str",
+        "logout(user_id: int) -> None"
+      ],
+      "dependencies": [
+        "userservice",
+        "authservice"
+      ],
+      "api": [
+        "GET /users/{id}",
+        "POST /users/login",
+        "DELETE /users/{id}"
+      ],
+      "compressed": "from userservice import UserService\nfrom authservice import AuthService\n\n@app.get(\"/users/{id}\")\ndef get_user(id: int) -> dict:\n    ⋮----\n\n@app.post(\"/users/login\")\ndef login(email: str, password: str) -> str:\n    ⋮----\n\n@app.delete(\"/users/{id}\")\ndef logout(user_id: int) -> None:\n    ⋮----"
+    }
+  }
+}

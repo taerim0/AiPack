@@ -9,6 +9,7 @@ from scanner import scan_files
 from tokenizer import analyze_tokens, analyze_tokens_with_compression
 from selector import select_files
 from llm import analyze_file_summary, analyze_rules, analyze_prompt
+from packager import pack, save_aif
 
 
 def main():
@@ -41,6 +42,12 @@ def main():
 
     an = sub.add_parser("analyze", help="LLM 분석")
     an.add_argument("path", help="프로젝트 폴더 경로")
+
+    p = sub.add_parser("pack", help="프로젝트 패킹")
+    p.add_argument("path", help="프로젝트 폴더 경로")
+    p.add_argument("--output", "-o", default="aif.json", help="출력 파일 경로")
+    p.add_argument("--auto", action="store_true", help="파일 자동 선택")
+
 
     args = parser.parse_args()
 
@@ -170,6 +177,35 @@ def main():
         print("✍️  AI 가이드")
         print("=" * 50)
         print(f"  {prompt_data['prompt']}")
+
+    elif args.command == "pack":
+        aif = pack(args.path, auto=args.auto)
+        if aif:
+            save_aif(aif, args.output)
+
+            print("\n" + "=" * 50)
+            print("📄 파일별 Summary")
+            print("=" * 50)
+            for name, data in aif["files"].items():
+                if data["summary"]:
+                    print(f"  {name}: {data['summary']}")
+
+            print("\n" + "=" * 50)
+            print("📋 코딩 룰")
+            print("=" * 50)
+            for rule in aif["rules"]:
+                print(f"  - {rule}")
+
+            print("\n" + "=" * 50)
+            print("✍️  AI 가이드")
+            print("=" * 50)
+            print(f"  {aif['project']['prompt']}")
+
+            print("\n" + "=" * 50)
+            print("📊 토큰 분석")
+            print("=" * 50)
+            for model, data in aif["tokens"].items():
+                print(f"  {model}: {data['original']} → {data['compressed']} ({data['saved_pct']}% 절감)")
 
 if __name__ == "__main__":
     main()
