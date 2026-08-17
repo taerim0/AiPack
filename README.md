@@ -1,4 +1,4 @@
-## AiPack
+## Ziplex
 
 A tool that converts local projects into structured contexts that AI can understand instantly.
 
