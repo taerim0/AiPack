@@ -10,6 +10,7 @@ from tokenizer import analyze_tokens, analyze_tokens_with_compression
 from selector import select_files
 from llm import analyze_file_summary, analyze_rules, analyze_prompt
 from packager import pack, save_aif
+from corrector import correct_aif
 
 
 def main():
@@ -181,6 +182,10 @@ def main():
     elif args.command == "pack":
         aif = pack(args.path, auto=args.auto)
         if aif:
+            # 사용자 보정
+            aif = correct_aif(aif)
+
+            # 저장
             save_aif(aif, args.output)
 
             print("\n" + "=" * 50)

@@ -30,14 +30,15 @@ def generate(prompt: str, retry: int = 3) -> str:
             return clean_json(text)
 
         error_code = data.get("error", {}).get("code", 0)
+        error_msg = data.get("error", {}).get("message", "unknown")
 
-        if error_code == 503:
+        if error_code in [503, 429]:
             wait = 2 ** attempt
-            print(f"  ⚠️  API 혼잡, {wait}초 후 재시도 ({attempt+1}/{retry})")
+            print(f"  ⚠️  재시도 ({attempt+1}/{retry})")
             time.sleep(wait)
             continue
 
-        print(f"  ❌ API 에러: {data.get('error', {}).get('message', 'unknown')}")
+        print(f"  ❌ API 에러: {error_msg}")
         break
 
     return "{}"
@@ -50,6 +51,20 @@ JSON으로만 답해. 다른 말 하지 마.
 파일명: {file_path}
 함수 시그니처: {signatures}
 의존성: {dependencies}
+
+{{"summary": "..."}}
+"""
+    return generate(prompt)
+
+
+def analyze_text_summary(file_path: str, content: str) -> str:
+    prompt = f"""
+아래 파일 내용을 보고 이 파일의 역할을 한 줄로 요약해줘.
+JSON으로만 답해. 다른 말 하지 마.
+
+파일명: {file_path}
+내용:
+{content[:500]}
 
 {{"summary": "..."}}
 """

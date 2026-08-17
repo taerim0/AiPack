@@ -8,7 +8,7 @@ from selector import select_files
 from extractor import extract_signatures, extract_dependencies, extract_api
 from compressor import compress_file
 from tokenizer import analyze_tokens_with_compression
-from llm import analyze_file_summary, analyze_rules, analyze_prompt
+from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analyze_prompt
 
 
 def pack(root_path: str, auto: bool = False) -> dict:
@@ -68,22 +68,30 @@ def pack(root_path: str, auto: bool = False) -> dict:
     print("\n🤖 LLM 분석 중...")
     for file_path, data in files_data.items():
         name = Path(file_path).name
-        if not data["signatures"] and not data["dependencies"]:
-            continue
 
-        print(f"  📄 {name} summary 생성 중...")
-        summary_response = analyze_file_summary(
-            file_path,
-            data["signatures"],
-            data["dependencies"]
-        )
+        # 코드 파일: 시그니처 기반 분석
+        if data["signatures"] or data["dependencies"]:
+            print(f"  📄 {name} summary 생성 중...")
+            summary_response = analyze_file_summary(
+                file_path,
+                data["signatures"],
+                data["dependencies"]
+            )
+
+        # 텍스트 파일: 내용 직접 전달
+        else:
+            print(f"  📄 {name} summary 생성 중... (텍스트)")
+            try:
+                content = open(file_path, "r", encoding="utf-8").read()
+            except:
+                content = ""
+            summary_response = analyze_text_summary(file_path, content)
+
         try:
             summary_data = json.loads(summary_response)
             files_data[file_path]["summary"] = summary_data.get("summary", "")
         except json.JSONDecodeError:
             files_data[file_path]["summary"] = ""
-
-        time.sleep(3)  # 무료 티어 한도 방지
 
     # 룰 추출
     print("  📋 코딩 룰 추출 중...")
@@ -98,16 +106,23 @@ def pack(root_path: str, auto: bool = False) -> dict:
 
     # 프롬프트 생성
     print("  ✍️  AI 가이드 생성 중...")
-    prompt_response = analyze_prompt(
-        project_name=root.name,
-        architecture=[],
-        rules=rules
-    )
-    try:
-        prompt_data = json.loads(prompt_response)
-        prompt = prompt_data.get("prompt", "")
-    except json.JSONDecodeError:
-        prompt = ""
+    prompt = ""
+    retry_count = 0
+    while not prompt and retry_count < 3:
+        prompt_response = analyze_prompt(
+            project_name=root.name,
+            architecture=[],
+            rules=rules
+        )
+        try:
+            prompt_data = json.loads(prompt_response)
+            prompt = prompt_data.get("prompt", "")
+        except json.JSONDecodeError:
+            prompt = ""
+        if not prompt:
+            retry_count += 1
+            print(f"  ⚠️  재시도 ({retry_count}/3)")
+            time.sleep(3)
 
     # 6. 토큰 카운팅
     print("\n📊 토큰 분석 중...")
