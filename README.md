@@ -2,6 +2,8 @@
 
 A tool that converts local projects into structured contexts that AI can understand instantly.
 
+> ⚠️ This project is currently under active development. Features and structure may change.
+
 ---
 
 ## Features
