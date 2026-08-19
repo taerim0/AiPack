@@ -1,5 +1,4 @@
-import json
-from pathlib import Path
+from file.relationship import build_stem_map, resolve_dependency, build_tree
 
 
 def correct_relationships(aif: dict) -> dict:
@@ -7,6 +6,12 @@ def correct_relationships(aif: dict) -> dict:
     print("(완료=q, 엔터=유지)\n")
 
     files = list(aif["files"].keys())
+    stem_map = build_stem_map(files)
+
+    def resolve(dep: str) -> str | None:
+        """dep(import 경로 또는 이미 확정된 파일명)이 프로젝트 내부 파일이면 파일명을, 아니면 None."""
+        matched = resolve_dependency(dep, stem_map)
+        return matched if matched in files else None
 
     def has_cycle(from_file: str, to_file: str) -> bool:
         """to_file이 from_file의 조상인지 확인 (순환 참조 감지)"""
@@ -21,8 +26,9 @@ def correct_relationships(aif: dict) -> dict:
             visited.add(current)
             deps = aif["files"].get(current, {}).get("dependencies", [])
             for dep in deps:
-                if dep in files:
-                    queue.append(dep)
+                matched = resolve(dep)
+                if matched:
+                    queue.append(matched)
         return False
 
     def print_current_tree():
@@ -30,16 +36,21 @@ def correct_relationships(aif: dict) -> dict:
         for name in files:
             deps = aif["files"][name].get("dependencies", [])
             for dep in deps:
-                if dep in files:
-                    all_children.add(dep)
+                matched = resolve(dep)
+                if matched:
+                    all_children.add(matched)
 
-        def print_node(name, depth=1):
+        def print_node(name, ancestors, depth=1):
             indent = "  " * depth
             deps = aif["files"].get(name, {}).get("dependencies", [])
             for dep in deps:
-                if dep in files:
-                    print(f"{indent}   └── 📄 {dep}")
-                    print_node(dep, depth + 1)
+                matched = resolve(dep)
+                if matched:
+                    if matched in ancestors:
+                        print(f"{indent}   └── 📄 {matched} (순환 참조 → 생략)")
+                        continue
+                    print(f"{indent}   └── 📄 {matched}")
+                    print_node(matched, ancestors | {matched}, depth + 1)
                 else:
                     print(f"{indent}   └── 📦 {dep}")
 
@@ -47,7 +58,7 @@ def correct_relationships(aif: dict) -> dict:
             if name in all_children:
                 continue
             print(f"  [{i}] {name}")
-            print_node(name)
+            print_node(name, {name})
 
     # 여러 번 수정 가능하게 루프
     while True:
@@ -89,11 +100,12 @@ def correct_relationships(aif: dict) -> dict:
                 print(f"  ⚠️  순환 참조 발생 → 이동 불가")
                 continue
 
-            # 기존 부모에서 제거
+            # 기존 부모에서 제거 (원본이 import 경로든 이전에 옮겨 붙인 파일명이든 매칭)
             for name in files:
                 deps = aif["files"][name].get("dependencies", [])
-                if move_file in deps:
-                    deps.remove(move_file)
+                aif["files"][name]["dependencies"] = [
+                    d for d in deps if resolve(d) != move_file
+                ]
 
             # 새 부모의 자식으로 추가
             if "dependencies" not in aif["files"][parent_file]:
@@ -160,7 +172,6 @@ def correct_aif(aif: dict) -> dict:
     aif = correct_relationships(aif)
 
     # 보정 완료 후 relationships 생성
-    from file.relationship import build_tree
     aif["relationships"] = build_tree(aif["files"])
 
     print("\n✅ 보정 완료")
