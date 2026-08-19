@@ -1,10 +1,12 @@
+**/__pycache__/
+
 .env
 
 aif.json
 
 testfiles/
 result/
+checkpoint/
 
 venv/
 
-src/__pycache__/
