@@ -34,6 +34,14 @@ def collect_files(root_path: str) -> list[str]:
 
     collected = []
     for dirpath, dirnames, filenames in os.walk(root):
+        # 제외 폴더는 아예 순회 안 함
+        dirnames[:] = [
+            d for d in dirnames
+            if not spec.match_file(
+                str(Path(dirpath).relative_to(root) / d) + "/"
+            )
+        ]
+
         for filename in filenames:
             file_path = Path(dirpath) / filename
             relative = file_path.relative_to(root)
