@@ -1,14 +1,12 @@
 import os
-import requests
 import time
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.getenv("GEMINI_API_KEY")
-URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={API_KEY}"
 
-def clean_json(text: str) -> str:
+def _clean_json(text: str) -> str:
     # 마크다운 코드블록 제거
     text = text.strip()
     if text.startswith("```"):
@@ -18,30 +16,60 @@ def clean_json(text: str) -> str:
     return text.strip()
 
 
-def generate(prompt: str, retry: int = 5) -> str:  # 3 → 5
-    for attempt in range(retry):
-        response = requests.post(URL, json={
-            "contents": [{"parts": [{"text": prompt}]}]
-        })
-        data = response.json()
+class GeminiProvider:
+    """Gemini REST API 프로바이더.
 
-        if "candidates" in data:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return clean_json(text)
+    다른 LLM을 추가하려면 이 클래스처럼 generate(prompt, retry) -> str 만
+    구현해서 아래 PROVIDERS에 한 줄 등록하면 된다. analyze_* 함수들은
+    provider가 뭐든 상관없이 모듈 레벨 generate()만 호출한다.
+    """
 
-        error_code = data.get("error", {}).get("code", 0)
-        error_msg = data.get("error", {}).get("message", "unknown")
+    def __init__(self, api_key: str | None = None, model: str = "gemini-flash-latest"):
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self.url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model}:generateContent?key={self.api_key}"
+        )
 
-        if error_code in [503, 429]:
-            wait = 5 * (attempt + 1)  # 5초, 10초, 15초
-            print(f"  ⚠️  서버 과부하, {wait}초 후 재시도 ({attempt+1}/{retry})")
-            time.sleep(wait)
-            continue
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        for attempt in range(retry):
+            response = requests.post(self.url, json={
+                "contents": [{"parts": [{"text": prompt}]}]
+            })
+            data = response.json()
 
-        print(f"  ❌ API 에러: {error_msg}")
-        break
+            if "candidates" in data:
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return _clean_json(text)
 
-    return "{}"
+            error_code = data.get("error", {}).get("code", 0)
+            error_msg = data.get("error", {}).get("message", "unknown")
+
+            if error_code in [503, 429]:
+                wait = 5 * (attempt + 1)  # 5초, 10초, 15초
+                print(f"  ⚠️  서버 과부하, {wait}초 후 재시도 ({attempt+1}/{retry})")
+                time.sleep(wait)
+                continue
+
+            print(f"  ❌ API 에러: {error_msg}")
+            break
+
+        return "{}"
+
+
+# 지원 프로바이더 레지스트리. 새 LLM을 추가하려면 여기에 클래스 하나 더하고
+# LLM_PROVIDER 환경변수로 고르게 하면 된다 (예: PROVIDERS["claude"] = ClaudeProvider).
+PROVIDERS = {
+    "gemini": GeminiProvider,
+}
+
+_provider = PROVIDERS[os.getenv("LLM_PROVIDER", "gemini")]()
+
+
+def generate(prompt: str, retry: int = 5) -> str:
+    """현재 활성 LLM 프로바이더에 위임. 스레드 세이프 (provider별 상태는 읽기 전용)."""
+    return _provider.generate(prompt, retry=retry)
+
 
 def analyze_file_summary(file_path: str, signatures: list[str], dependencies: list[str]) -> str:
     prompt = f"""

@@ -1,6 +1,6 @@
 import json
-import time
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from file.collector import collect_files
 from file.scanner import scan_files
@@ -12,6 +12,10 @@ from tokenizer import analyze_tokens_with_compression
 from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analyze_prompt
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
+
+# 파일별 summary를 병렬 요청할 때 쓰는 동시 실행 수.
+# LLM API 레이트리밋을 고려해 보수적으로 잡음 — 필요하면 조정.
+MAX_WORKERS = 4
 
 
 def save_checkpoint(root_path: str, data: dict) -> None:
@@ -68,6 +72,28 @@ def handle_llm_failure(name: str, field: str, current_aif: dict, root_path: str)
         return "EXIT"
 
     return None
+
+
+def _request_summary(file_path: str, data: dict) -> str:
+    """파일 하나의 summary를 한 번 시도해서 돌려준다. 실패하면 빈 문자열.
+
+    (네트워크 재시도는 llm.generate() 내부에서 이미 처리하므로 여기선
+    한 번만 시도한다 — 사용자 개입 여부는 호출하는 쪽에서 결정)
+    """
+    if data["signatures"] or data["dependencies"]:
+        response = analyze_file_summary(
+            file_path,
+            data["signatures"],
+            data["dependencies"]
+        )
+    else:
+        content = read_text(file_path) or ""
+        response = analyze_text_summary(file_path, content)
+
+    try:
+        return json.loads(response).get("summary", "")
+    except json.JSONDecodeError:
+        return ""
 
 
 def _current_aif_snapshot(root: Path, files_data: dict, rules: list = None, prompt: str = "") -> dict:
@@ -159,47 +185,24 @@ def pack(root_path: str, auto: bool = False) -> dict:
         print(f"  ✅ {name}")
 
     # 5. LLM 분석
+    # summary는 correct_aif()에서 파일마다 사람이 검수/수정하므로, 여기서는
+    # 재시도 메뉴 없이 병렬로 한 번씩 시도하고 실패한 파일은 플레이스홀더로
+    # 채운다 (틀린 요약이 있어도 다음 단계에서 바로잡힌다).
     print("\n🤖 LLM 분석 중...")
-    for file_path, data in files_data.items():
-        name = _rel_key(file_path, root)
+    pending = {
+        fp: data for fp, data in files_data.items() if not data.get("summary")
+    }
 
-        if data.get("summary"):
-            continue
-
-        summary = ""
-        while not summary:
-            print(f"  📄 {name} summary 생성 중...")
-
-            if data["signatures"] or data["dependencies"]:
-                summary_response = analyze_file_summary(
-                    file_path,
-                    data["signatures"],
-                    data["dependencies"]
-                )
-            else:
-                content = read_text(file_path) or ""
-                summary_response = analyze_text_summary(file_path, content)
-
-            try:
-                summary_data = json.loads(summary_response)
-                summary = summary_data.get("summary", "")
-            except json.JSONDecodeError:
-                summary = ""
-
-            if not summary:
-                result = handle_llm_failure(
-                    name, "summary",
-                    _current_aif_snapshot(root, files_data),
-                    root_path
-                )
-                if result == "EXIT":
-                    return {}
-                elif result is None:
-                    continue
-                else:
-                    summary = result
-
-        files_data[file_path]["summary"] = summary
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(_request_summary, fp, data): fp
+            for fp, data in pending.items()
+        }
+        for future in as_completed(futures):
+            fp = futures[future]
+            summary = future.result() or "요약 생성 실패"
+            files_data[fp]["summary"] = summary
+            print(f"  ✅ {_rel_key(fp, root)}")
 
     # 룰 추출 (체크포인트에서 복원)
     rules = restored_rules
