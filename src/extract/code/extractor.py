@@ -1,4 +1,4 @@
-from core.parser import get_parser
+from extract.code.parser import get_parser
 from pathlib import Path
 
 FUNCTION_NODE_TYPES = {
