@@ -18,7 +18,7 @@ def clean_json(text: str) -> str:
     return text.strip()
 
 
-def generate(prompt: str, retry: int = 3) -> str:
+def generate(prompt: str, retry: int = 5) -> str:  # 3 → 5
     for attempt in range(retry):
         response = requests.post(URL, json={
             "contents": [{"parts": [{"text": prompt}]}]
@@ -33,8 +33,8 @@ def generate(prompt: str, retry: int = 3) -> str:
         error_msg = data.get("error", {}).get("message", "unknown")
 
         if error_code in [503, 429]:
-            wait = 2 ** attempt
-            print(f"  ⚠️  재시도 ({attempt+1}/{retry})")
+            wait = 5 * (attempt + 1)  # 5초, 10초, 15초
+            print(f"  ⚠️  서버 과부하, {wait}초 후 재시도 ({attempt+1}/{retry})")
             time.sleep(wait)
             continue
 
