@@ -4,7 +4,5 @@ tree-sitter-java
 tree-sitter-typescript
 tiktoken
 pathspec
-anthropic
-google-genai
 python-dotenv
 requests
