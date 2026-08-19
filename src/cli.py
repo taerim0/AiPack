@@ -2,16 +2,16 @@ import argparse
 import json
 from pathlib import Path
 
-from extractor import extract_signatures, extract_dependencies, extract_api, debug_tree
-from compressor import compress_file
-from collector import collect_files, print_tree
-from scanner import scan_files
+from extract.code.extractor import extract_signatures, extract_dependencies, extract_api, debug_tree
+from extract.code.compressor import compress_file
+from file.collector import collect_files, print_tree
+from file.scanner import scan_files
 from tokenizer import analyze_tokens, analyze_tokens_with_compression
-from selector import select_files
+from file.selector import select_files
 from llm import analyze_file_summary, analyze_rules, analyze_prompt
 from packager import pack, save_aif
 from corrector import correct_aif
-from relationship import build_tree, print_tree
+from file.relationship import build_tree, print_tree
 
 
 def main():

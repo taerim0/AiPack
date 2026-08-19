@@ -1,6 +1,6 @@
 import tiktoken
 
-from compressor import compress_file
+from extract.code.compressor import compress_file
 
 MODEL_ENCODINGS = {
     "GPT-4o":  "o200k_base",

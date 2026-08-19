@@ -2,11 +2,11 @@ import json
 import time
 from pathlib import Path
 
-from collector import collect_files
-from scanner import scan_files
-from selector import select_files
-from extractor import extract_signatures, extract_dependencies, extract_api
-from compressor import compress_file
+from file.collector import collect_files
+from file.scanner import scan_files
+from file.selector import select_files
+from extract.code.extractor import extract_signatures, extract_dependencies, extract_api
+from extract.code.compressor import compress_file
 from tokenizer import analyze_tokens_with_compression
 from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analyze_prompt
 

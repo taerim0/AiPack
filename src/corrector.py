@@ -160,7 +160,7 @@ def correct_aif(aif: dict) -> dict:
     aif = correct_relationships(aif)
 
     # 보정 완료 후 relationships 생성
-    from relationship import build_tree
+    from file.relationship import build_tree
     aif["relationships"] = build_tree(aif["files"])
 
     print("\n✅ 보정 완료")
