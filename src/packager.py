@@ -39,6 +39,19 @@ def delete_checkpoint(root_path: str) -> None:
         path.unlink()
 
 
+def _rel_key(file_path: str, root: Path) -> str:
+    """파일의 프로젝트 루트 기준 상대경로를 aif.json/체크포인트 키로 쓴다.
+
+    파일명(basename)만 쓰면 서로 다른 폴더에 있는 동명 파일(예: 여러 모듈의
+    init.py, config.py)이 같은 키로 겹쳐 마지막 파일이 앞 파일을 조용히
+    덮어쓴다. 상대경로를 키로 쓰면 그런 충돌이 생기지 않는다.
+    """
+    try:
+        return Path(file_path).relative_to(root).as_posix()
+    except ValueError:
+        return Path(file_path).name
+
+
 def handle_llm_failure(name: str, field: str, current_aif: dict, root_path: str) -> str | None:
     print(f"\n  ⚠️  {name} {field} 생성 실패")
     print("  [1] 재시도")
@@ -57,12 +70,12 @@ def handle_llm_failure(name: str, field: str, current_aif: dict, root_path: str)
     return None
 
 
-def _current_aif_snapshot(root_name: str, files_data: dict, rules: list = None, prompt: str = "") -> dict:
+def _current_aif_snapshot(root: Path, files_data: dict, rules: list = None, prompt: str = "") -> dict:
     return {
-        "project": {"name": root_name, "prompt": prompt},
+        "project": {"name": root.name, "prompt": prompt},
         "rules": rules or [],
         "files_data": {
-            Path(fp).name: d
+            _rel_key(fp, root): d
             for fp, d in files_data.items()
         }
     }
@@ -117,7 +130,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
     signatures_map = {}
 
     for file_path in selected:
-        name = Path(file_path).name
+        name = _rel_key(file_path, root)
 
         # 체크포인트에서 복원
         if checkpoint and name in checkpoint.get("files_data", {}):
@@ -148,7 +161,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
     # 5. LLM 분석
     print("\n🤖 LLM 분석 중...")
     for file_path, data in files_data.items():
-        name = Path(file_path).name
+        name = _rel_key(file_path, root)
 
         if data.get("summary"):
             continue
@@ -176,7 +189,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
             if not summary:
                 result = handle_llm_failure(
                     name, "summary",
-                    _current_aif_snapshot(root.name, files_data),
+                    _current_aif_snapshot(root, files_data),
                     root_path
                 )
                 if result == "EXIT":
@@ -203,7 +216,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
             if not rules:
                 result = handle_llm_failure(
                     "rules", "코딩 룰",
-                    _current_aif_snapshot(root.name, files_data),
+                    _current_aif_snapshot(root, files_data),
                     root_path
                 )
                 if result == "EXIT":
@@ -234,7 +247,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
             if not prompt:
                 result = handle_llm_failure(
                     "prompt", "AI 가이드",
-                    _current_aif_snapshot(root.name, files_data, rules),
+                    _current_aif_snapshot(root, files_data, rules),
                     root_path
                 )
                 if result == "EXIT":
@@ -266,7 +279,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
             for model, data in token_results.items()
         },
         "files": {
-            Path(fp).name: {
+            _rel_key(fp, root): {
                 "summary": data["summary"],
                 "signatures": data["signatures"],
                 "dependencies": data["dependencies"],
