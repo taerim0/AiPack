@@ -2,6 +2,8 @@ import subprocess
 import json
 import re
 
+from file.textutil import read_text
+
 # Secretlint 실패 시 fallback용 패턴
 SENSITIVE_PATTERNS = [
     r'AWS_SECRET\s*=\s*["\']',
@@ -27,9 +29,8 @@ def _scan_with_secretlint(file_path: str) -> bool:
 
 
 def _scan_with_pattern(file_path: str) -> bool:
-    try:
-        content = open(file_path, "r", encoding="utf-8").read()
-    except (UnicodeDecodeError, IsADirectoryError):
+    content = read_text(file_path)
+    if content is None:
         return False
 
     for pattern in SENSITIVE_PATTERNS:

@@ -1,4 +1,5 @@
 from extract.code.parser import get_parser
+from file.textutil import read_text
 from pathlib import Path
 
 FUNCTION_NODE_TYPES = {
@@ -9,9 +10,12 @@ FUNCTION_NODE_TYPES = {
 }
 
 def extract_signatures(file_path: str) -> list[str]:
-    code = open(file_path, "r", encoding="utf-8").read()
     parser = get_parser(file_path)
     if not parser:
+        return []
+
+    code = read_text(file_path)
+    if code is None:
         return []
 
     ext = Path(file_path).suffix
@@ -24,9 +28,12 @@ def extract_signatures(file_path: str) -> list[str]:
 
 
 def extract_dependencies(file_path: str) -> list[str]:
-    code = open(file_path, "r", encoding="utf-8").read()
     parser = get_parser(file_path)
     if not parser:
+        return []
+
+    code = read_text(file_path)
+    if code is None:
         return []
 
     tree = parser.parse(bytes(code, "utf8"))
@@ -36,9 +43,12 @@ def extract_dependencies(file_path: str) -> list[str]:
 
 
 def extract_api(file_path: str) -> list[str]:
-    code = open(file_path, "r", encoding="utf-8").read()
     parser = get_parser(file_path)
     if not parser:
+        return []
+
+    code = read_text(file_path)
+    if code is None:
         return []
 
     tree = parser.parse(bytes(code, "utf8"))
@@ -123,8 +133,16 @@ def _walk(node):
 
 
 def debug_tree(file_path: str):
-    code = open(file_path, "r", encoding="utf-8").read()
     parser = get_parser(file_path)
+    if not parser:
+        print(f"⚠️  지원하지 않는 파일 형식입니다: {file_path}")
+        return
+
+    code = read_text(file_path)
+    if code is None:
+        print(f"⚠️  텍스트로 읽을 수 없는 파일입니다: {file_path}")
+        return
+
     tree = parser.parse(bytes(code, "utf8"))
     _print_tree(tree.root_node, 0)
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from file.collector import collect_files
 from file.scanner import scan_files
 from file.selector import select_files
+from file.textutil import read_text
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api
 from extract.code.compressor import compress_file
 from tokenizer import analyze_tokens_with_compression
@@ -163,10 +164,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
                     data["dependencies"]
                 )
             else:
-                try:
-                    content = open(file_path, "r", encoding="utf-8").read()
-                except:
-                    content = ""
+                content = read_text(file_path) or ""
                 summary_response = analyze_text_summary(file_path, content)
 
             try:

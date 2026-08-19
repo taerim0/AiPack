@@ -1,9 +1,14 @@
 from extract.code.parser import get_parser
+from file.textutil import read_text
 
 MARKER = "    ⋮----"
 
 def compress_file(file_path: str) -> str:
-    code = open(file_path, "r", encoding="utf-8").read()
+    code = read_text(file_path)
+    if code is None:
+        # 바이너리 등 텍스트로 읽을 수 없는 파일 → 압축 대상 아님
+        return ""
+
     parser = get_parser(file_path)
 
     # 지원 안 하는 언어면 그대로 반환

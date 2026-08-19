@@ -4,14 +4,14 @@ from pathlib import Path
 
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api, debug_tree
 from extract.code.compressor import compress_file
-from file.collector import collect_files, print_tree
+from file.collector import collect_files, print_tree as print_file_tree
 from file.scanner import scan_files
 from tokenizer import analyze_tokens, analyze_tokens_with_compression
 from file.selector import select_files
 from llm import analyze_file_summary, analyze_rules, analyze_prompt
 from packager import pack, save_aif
 from corrector import correct_aif
-from file.relationship import build_tree, print_tree
+from file.relationship import build_tree, print_tree as print_dependency_tree
 
 
 def main():
@@ -82,7 +82,7 @@ def main():
         scan_result = scan_files(files)
 
         print(f"\n📁 수집된 파일: {len(files)}개")
-        print_tree(files, args.path)
+        print_file_tree(files, args.path)
 
         if scan_result["dangerous"]:
             print(f"\n⚠️  민감 파일 감지: {len(scan_result['dangerous'])}개")
@@ -224,7 +224,7 @@ def main():
             files_data[file_path] = {"dependencies": deps}
 
         tree = build_tree(files_data)
-        print_tree(tree)
+        print_dependency_tree(tree)
 
 if __name__ == "__main__":
     main()

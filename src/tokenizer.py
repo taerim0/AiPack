@@ -1,6 +1,7 @@
 import tiktoken
 
 from extract.code.compressor import compress_file
+from file.textutil import read_text
 
 MODEL_ENCODINGS = {
     "GPT-4o":  "o200k_base",
@@ -22,11 +23,10 @@ def count_tokens(text: str, encoding_name: str) -> int:
 def analyze_tokens(file_paths: list[str]) -> tuple:
     combined = ""
     for file_path in file_paths:
-        try:
-            content = open(file_path, "r", encoding="utf-8").read()
-            combined += f"\n### {file_path}\n{content}\n"
-        except (UnicodeDecodeError, IsADirectoryError):
+        content = read_text(file_path)
+        if content is None:
             continue
+        combined += f"\n### {file_path}\n{content}\n"
 
     results = {}
     for model, encoding in MODEL_ENCODINGS.items():
@@ -50,14 +50,13 @@ def analyze_tokens_with_compression(file_paths: list[str]) -> tuple:
     compressed_text = ""
 
     for file_path in file_paths:
-        try:
-            content = open(file_path, "r", encoding="utf-8").read()
-            original_text += f"\n### {file_path}\n{content}\n"
-
-            compressed = compress_file(file_path)
-            compressed_text += f"\n### {file_path}\n{compressed}\n"
-        except (UnicodeDecodeError, IsADirectoryError):
+        content = read_text(file_path)
+        if content is None:
             continue
+        original_text += f"\n### {file_path}\n{content}\n"
+
+        compressed = compress_file(file_path)
+        compressed_text += f"\n### {file_path}\n{compressed}\n"
 
     results = {}
     for model, encoding in MODEL_ENCODINGS.items():
