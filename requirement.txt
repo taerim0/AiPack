@@ -7,3 +7,5 @@ pathspec
 python-dotenv
 requests
 mcp
+flask
+pywebview

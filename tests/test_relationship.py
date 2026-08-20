@@ -1,7 +1,7 @@
 import pytest
 
 from file.relationship import (
-    build_tree, has_cycle, move_file, build_stem_map, CycleError,
+    build_tree, has_cycle, move_file, add_dependency, remove_dependency, build_stem_map, CycleError,
     get_dependents, get_blast_radius,
 )
 
@@ -78,6 +78,70 @@ def test_move_file_raises_on_unknown_or_self():
 
     with pytest.raises(ValueError):
         move_file(files, "missing.py", "b.py")
+
+
+def test_add_dependency_only_touches_the_one_file():
+    files = {
+        "a.py": {"dependencies": []},
+        "b.py": {"dependencies": ["c"]},  # b already depends on c
+        "c.py": {"dependencies": []},
+    }
+    add_dependency(files, "a.py", "c.py")
+
+    assert files["a.py"]["dependencies"] == ["c.py"]
+    assert files["b.py"]["dependencies"] == ["c"]  # untouched -- unlike move_file()
+
+
+def test_add_dependency_is_a_noop_when_the_edge_already_exists():
+    files = {
+        "a.py": {"dependencies": ["c"]},  # raw import-path form
+        "c.py": {"dependencies": []},
+    }
+    add_dependency(files, "a.py", "c.py")  # already-resolved form of the same edge
+
+    assert files["a.py"]["dependencies"] == ["c"]  # not duplicated
+
+
+def test_add_dependency_raises_on_cycle():
+    files = {
+        "a.py": {"dependencies": []},
+        "b.py": {"dependencies": ["a"]},  # b already depends on a
+    }
+    with pytest.raises(CycleError):
+        add_dependency(files, "a.py", "b.py")  # would close a -> b -> a
+
+
+def test_add_dependency_raises_on_unknown_or_self():
+    files = {"a.py": {"dependencies": []}, "b.py": {"dependencies": []}}
+
+    with pytest.raises(ValueError):
+        add_dependency(files, "a.py", "a.py")
+    with pytest.raises(ValueError):
+        add_dependency(files, "a.py", "missing.py")
+
+
+def test_remove_dependency_removes_only_that_edge():
+    files = {
+        "a.py": {"dependencies": ["b", "c"]},
+        "b.py": {"dependencies": []},
+        "c.py": {"dependencies": []},
+    }
+    remove_dependency(files, "a.py", "b.py")
+
+    assert files["a.py"]["dependencies"] == ["c"]
+
+
+def test_remove_dependency_is_a_noop_when_no_such_edge():
+    files = {"a.py": {"dependencies": []}, "b.py": {"dependencies": []}}
+    remove_dependency(files, "a.py", "b.py")
+
+    assert files["a.py"]["dependencies"] == []
+
+
+def test_remove_dependency_raises_on_unknown_file():
+    files = {"a.py": {"dependencies": []}}
+    with pytest.raises(ValueError):
+        remove_dependency(files, "missing.py", "a.py")
 
 
 def test_get_dependents_finds_direct_dependents_only():

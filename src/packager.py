@@ -206,7 +206,13 @@ def _current_aif_snapshot(root: Path, files_data: dict, rules: list = None, prom
     }
 
 
-def pack(root_path: str, auto: bool = False, interactive: bool = True, use_cache: bool = True) -> dict:
+def pack(
+    root_path: str,
+    auto: bool = False,
+    interactive: bool = True,
+    use_cache: bool = True,
+    preselected: list[str] | None = None,
+) -> dict:
     """auto controls file selection (skip the interactive picker, include all
     safe files); interactive controls whether a failing LLM call can prompt
     for input at all. The two are independent: `--auto` alone still lets
@@ -215,6 +221,17 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True, use_cache
     file selection left interactive. `cli.py`'s `--auto-correct` sets both
     this and whether corrector.py's interactive review runs afterward, since
     both boil down to the same question: is there a terminal to prompt?
+
+    preselected, when given, wins over both auto and the interactive
+    select_files() picker: a list of relative names (the same keys aif.json
+    ends up keyed by) to include, already decided by the caller. This is
+    gui_server.py's seam -- pack_service.py's file-selection screen runs
+    collect_files()/scan_files() itself to show a human the safe/dangerous
+    split in the browser, then passes back what they checked, since
+    select_files()'s input()-based picker has no terminal to read from over
+    HTTP. An empty list is valid input (selects nothing, same as an empty
+    picker response) and not the same as None (which falls through to
+    auto/select_files()).
 
     use_cache controls incremental reuse (staleness stage 2): when a
     previous successful pack is found at the conventional RESULT_DIR path
@@ -254,7 +271,11 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True, use_cache
             print(f"  ❌ {Path(f).name}")
 
     # 3. Select files
-    if auto:
+    if preselected is not None:
+        wanted = set(preselected)
+        selected = [f for f in safe_files if _rel_key(f, root) in wanted]
+        print(f"  ✅ {len(selected)}개 파일 선택됨 (지정된 목록 기준)")
+    elif auto:
         selected = safe_files
         print(f"  ✅ 전체 {len(selected)}개 파일 선택됨")
     else:

@@ -1,0 +1,420 @@
+"""Verifies gui_server.py's /api/* routes correctly adapt query params to
+query_service.py calls and shape JSON responses -- not the underlying logic,
+which is already covered via query_service through test_mcp_server.py (same
+core, different transport) and test_relationship.py/test_search.py directly.
+Also checks static file serving (index.html/app.js/style.css) and the real
+behavior that lives in gui_server.py itself: turning get_detail's/
+search_project's ValueError, and a bad aif_path/project_path's OSError/
+JSONDecodeError, into clean JSON error responses instead of a 500; and
+_find_free_port()'s fallback when the requested port is already taken.
+"""
+
+import json
+import socket
+import time
+
+import pytest
+
+import freshness
+import gui_server
+import llm
+import packager
+
+
+@pytest.fixture
+def client():
+    gui_server.app.testing = True
+    return gui_server.app.test_client()
+
+
+def _write_sample_aif(tmp_path):
+    aif_path = tmp_path / "sample.json"
+    aif_path.write_text(json.dumps({
+        "project": {"name": "sample", "prompt": "A sample project."},
+        "rules": ["rule one"],
+        "tokens": {"GPT-4o": {"original": 100, "compressed": 20, "saved_pct": 80.0}},
+        "files": {
+            "a.py": {"summary": "does a thing"},
+            "b.py": {"summary": "uses a.py"},
+        },
+        "relationships": {
+            "a.py": {"internal": [], "external": []},
+            "b.py": {"internal": ["a.py"], "external": []},
+        },
+    }), encoding="utf-8")
+    (tmp_path / "sample.detail.json").write_text(json.dumps({
+        "a.py": {"compressed": "def thing():\n    ⋮----\n"},
+        "b.py": {"compressed": "import a\n"},
+    }), encoding="utf-8")
+    return str(aif_path)
+
+
+def test_index_serves_static_shell(client):
+    res = client.get("/")
+    assert res.status_code == 200
+    assert b"app.js" in res.data
+
+
+def test_static_assets_are_served(client):
+    assert client.get("/app.js").status_code == 200
+    assert client.get("/style.css").status_code == 200
+
+
+def test_config_reflects_startup_defaults(client):
+    gui_server._default_config["aif_path"] = "some/path.json"
+    gui_server._default_config["project_path"] = None
+    res = client.get("/api/config")
+    assert res.get_json() == {"aif_path": "some/path.json", "project_path": None}
+    gui_server._default_config["aif_path"] = None  # reset for other tests
+
+
+def _wait_for_job(client, job_id, timeout=10):
+    since = 0
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        res = client.get("/api/pack/status", query_string={"job_id": job_id, "since": since})
+        data = res.get_json()
+        since = data["log_len"]
+        if data["state"] != "running":
+            return data
+        time.sleep(0.02)
+    raise AssertionError("pack job did not finish in time")
+
+
+def test_api_select_files_splits_safe_and_dangerous(client, tmp_path):
+    project = tmp_path / "project"
+    (project).mkdir()
+    (project / "main.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (project / "secret.env").write_text('API_KEY = "abc123"\n', encoding="utf-8")
+
+    res = client.get("/api/select_files", query_string={"project_path": str(project)})
+    assert res.status_code == 200
+    data = res.get_json()
+    assert "main.py" in data["safe"]
+    assert "secret.env" in data["dangerous"]
+
+
+def test_api_select_files_missing_project_dir_is_404(client, tmp_path):
+    res = client.get("/api/select_files", query_string={"project_path": str(tmp_path / "does_not_exist")})
+    assert res.status_code == 404
+    assert "error" in res.get_json()
+
+
+def test_api_pack_requires_project_path(client):
+    res = client.post("/api/pack", json={})
+    assert res.status_code == 400
+    assert "error" in res.get_json()
+
+
+def test_api_pack_missing_project_dir_is_404(client, tmp_path):
+    res = client.post("/api/pack", json={"project_path": str(tmp_path / "does_not_exist"), "selected_files": ["a.py"]})
+    assert res.status_code == 404
+    assert "error" in res.get_json()
+
+
+def test_api_pack_requires_selected_files(client, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    res = client.post("/api/pack", json={"project_path": str(project), "selected_files": []})
+    assert res.status_code == 400
+    assert "error" in res.get_json()
+
+
+def test_api_pack_status_unknown_job_is_404(client):
+    res = client.get("/api/pack/status", query_string={"job_id": "no-such-job"})
+    assert res.status_code == 404
+    assert "error" in res.get_json()
+
+
+def test_api_pack_review_unknown_job_is_404(client):
+    res = client.get("/api/pack/review", query_string={"job_id": "no-such-job"})
+    assert res.status_code == 404
+    assert "error" in res.get_json()
+
+
+def test_api_pack_finalize_requires_job_id(client):
+    res = client.post("/api/pack/finalize", json={})
+    assert res.status_code == 400
+    assert "error" in res.get_json()
+
+
+def test_api_pack_finalize_unknown_job_is_404(client):
+    res = client.post("/api/pack/finalize", json={"job_id": "no-such-job"})
+    assert res.status_code == 404
+    assert "error" in res.get_json()
+
+
+def test_api_pack_cancel_unknown_job_is_404(client):
+    res = client.post("/api/pack/cancel", json={"job_id": "no-such-job"})
+    assert res.status_code == 404
+    assert "error" in res.get_json()
+
+
+def test_api_pack_runs_end_to_end_with_mock_provider(client, tmp_path, monkeypatch):
+    # This is the route-adapter test (starts the job over HTTP, polls it over
+    # HTTP, reviews and finalizes it over HTTP, checks the job actually
+    # reaches the filesystem) -- pack_service.py's own job-lifecycle behavior
+    # (log capture, since= slicing, error state, review/edit application) is
+    # covered directly in test_pack_service.py.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    output_path = tmp_path / "out" / "project.json"
+
+    files = client.get("/api/select_files", query_string={"project_path": str(project)}).get_json()
+    assert files["safe"] == ["main.py"]
+
+    start = client.post("/api/pack", json={
+        "project_path": str(project), "output_path": str(output_path), "selected_files": files["safe"],
+    })
+    assert start.status_code == 200
+    job_id = start.get_json()["job_id"]
+
+    status = _wait_for_job(client, job_id)
+    assert status["state"] == "reviewing"
+    assert not output_path.exists()  # paused for review, nothing saved yet
+
+    review = client.get("/api/pack/review", query_string={"job_id": job_id})
+    assert review.status_code == 200
+    review_data = review.get_json()
+    assert review_data["project"]["name"] == "project"
+    all_reviewed = review_data["needs_review"] + review_data["auto_kept"]
+    assert [e["file"] for e in all_reviewed] == ["main.py"]
+
+    finalize = client.post("/api/pack/finalize", json={
+        "job_id": job_id,
+        "project_name": "",  # blank -> keep as-is, same as pressing enter through a terminal prompt
+        "rules": review_data["rules"],
+        "summaries": {"main.py": "Adds two numbers."},
+    })
+    assert finalize.status_code == 200
+    assert finalize.get_json() == {"aif_path": str(output_path), "project_path": str(project)}
+    assert output_path.exists()
+
+    saved = json.loads(output_path.read_text(encoding="utf-8"))
+    assert saved["files"]["main.py"]["summary"] == "Adds two numbers."
+
+    # the review payload is gone once a job is finalized -- nothing left to review
+    assert client.get("/api/pack/review", query_string={"job_id": job_id}).status_code == 404
+
+
+def test_api_pack_link_adds_an_edge_and_rejects_cycles(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "a.py").write_text("def a():\n    pass\n", encoding="utf-8")
+    (project / "b.py").write_text("def b():\n    pass\n", encoding="utf-8")
+
+    start = client.post("/api/pack", json={"project_path": str(project), "selected_files": ["a.py", "b.py"]})
+    job_id = start.get_json()["job_id"]
+    _wait_for_job(client, job_id)
+
+    link = client.post("/api/pack/link", json={"job_id": job_id, "file": "a.py", "target": "b.py"})
+    assert link.status_code == 200
+    assert link.get_json()["tree"]["a.py"]["internal"] == ["b.py"]
+
+    cycle = client.post("/api/pack/link", json={"job_id": job_id, "file": "b.py", "target": "a.py"})
+    assert cycle.status_code == 409
+    assert "error" in cycle.get_json()
+
+    missing = client.post("/api/pack/link", json={"job_id": "no-such-job", "file": "a.py", "target": "b.py"})
+    assert missing.status_code == 404
+
+
+def test_api_pack_unlink_removes_only_that_edge(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "a.py").write_text("def a():\n    pass\n", encoding="utf-8")
+    (project / "b.py").write_text("def b():\n    pass\n", encoding="utf-8")
+    (project / "c.py").write_text("def c():\n    pass\n", encoding="utf-8")
+
+    start = client.post("/api/pack", json={"project_path": str(project), "selected_files": ["a.py", "b.py", "c.py"]})
+    job_id = start.get_json()["job_id"]
+    _wait_for_job(client, job_id)
+
+    client.post("/api/pack/link", json={"job_id": job_id, "file": "a.py", "target": "b.py"})
+    client.post("/api/pack/link", json={"job_id": job_id, "file": "a.py", "target": "c.py"})
+
+    unlink = client.post("/api/pack/unlink", json={"job_id": job_id, "file": "a.py", "target": "b.py"})
+    assert unlink.status_code == 200
+    assert unlink.get_json()["tree"]["a.py"]["internal"] == ["c.py"]
+
+    missing = client.post("/api/pack/unlink", json={"job_id": "no-such-job", "file": "a.py", "target": "b.py"})
+    assert missing.status_code == 404
+
+
+def test_api_pack_cancel_discards_a_reviewing_job(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+    start = client.post("/api/pack", json={"project_path": str(project), "selected_files": ["main.py"]})
+    job_id = start.get_json()["job_id"]
+    _wait_for_job(client, job_id)
+
+    cancel = client.post("/api/pack/cancel", json={"job_id": job_id})
+    assert cancel.status_code == 200
+    assert cancel.get_json() == {"ok": True}
+
+    status = client.get("/api/pack/status", query_string={"job_id": job_id}).get_json()
+    assert status["state"] == "error"
+
+
+def test_api_overview(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    res = client.get("/api/overview", query_string={"aif_path": aif_path})
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["project"]["name"] == "sample"
+    assert data["file_count"] == 2
+    assert "_stale" not in data
+
+
+def test_api_overview_requires_aif_path(client):
+    res = client.get("/api/overview")
+    assert res.status_code == 400
+
+
+def test_api_files(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    res = client.get("/api/files", query_string={"aif_path": aif_path})
+    assert res.get_json() == {
+        "a.py": {"summary": "does a thing", "confidence": 1.0},
+        "b.py": {"summary": "uses a.py", "confidence": 1.0},
+    }
+
+
+def test_api_files_attaches_stale_warning(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "sample.cache.json").write_text(
+        json.dumps(freshness.build_manifest([str(project / "a.py")], str(project))),
+        encoding="utf-8",
+    )
+    (project / "a.py").write_text("x = 2\n", encoding="utf-8")  # edit after cache taken
+
+    res = client.get("/api/files", query_string={"aif_path": aif_path, "project_path": str(project)})
+    data = res.get_json()
+    assert data["_stale"]["is_stale"] is True
+
+
+def test_api_dependents(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    res = client.get("/api/dependents", query_string={"aif_path": aif_path, "file": "a.py"})
+    assert res.get_json() == ["b.py"]
+
+
+def test_api_blast_radius(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    res = client.get("/api/blast_radius", query_string={"aif_path": aif_path, "file": "a.py"})
+    assert res.get_json() == ["b.py"]
+
+
+def test_api_detail(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    res = client.get("/api/detail", query_string={"aif_path": aif_path, "file": "a.py"})
+    assert res.status_code == 200
+    assert res.get_json() == {"compressed": "def thing():\n    ⋮----"}
+
+
+def test_api_detail_missing_file_is_404_not_500(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    res = client.get("/api/detail", query_string={"aif_path": aif_path, "file": "missing.py"})
+    assert res.status_code == 404
+    assert "error" in res.get_json()
+
+
+def test_api_detail_line_range(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    res = client.get("/api/detail", query_string={"aif_path": aif_path, "file": "a.py", "start_line": 1, "end_line": 1})
+    assert res.get_json() == {"compressed": "def thing():"}
+
+
+def test_api_freshness(client, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    aif_path = tmp_path / "sample.json"
+    aif_path.write_text(json.dumps({"project": {"name": "sample"}}), encoding="utf-8")
+    (tmp_path / "sample.cache.json").write_text(
+        json.dumps(freshness.build_manifest([str(project / "a.py")], str(project))),
+        encoding="utf-8",
+    )
+
+    res = client.get("/api/freshness", query_string={"project_path": str(project), "aif_path": str(aif_path)})
+    assert res.get_json() == {
+        "is_stale": False, "changed": [], "added": [], "removed": [], "unchanged": ["a.py"],
+    }
+
+
+def test_api_search(client, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "a.py").write_text("def hello():\n    pass\n", encoding="utf-8")
+
+    res = client.get("/api/search", query_string={"project_path": str(project), "pattern": "hello"})
+    assert res.status_code == 200
+    data = res.get_json()
+    assert len(data) == 1
+    assert data[0]["file"] == "a.py"
+    assert data[0]["line"] == 1
+
+
+def test_api_search_invalid_regex_is_400_not_500(client, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    res = client.get("/api/search", query_string={"project_path": str(project), "pattern": "("})
+    assert res.status_code == 400
+    assert "error" in res.get_json()
+
+
+def test_api_overview_missing_aif_path_is_404_not_500(client, tmp_path):
+    res = client.get("/api/overview", query_string={"aif_path": str(tmp_path / "does_not_exist.json")})
+    assert res.status_code == 404
+    assert "error" in res.get_json()
+
+
+def test_api_dependents_missing_aif_path_is_404_not_500(client, tmp_path):
+    res = client.get("/api/dependents", query_string={"aif_path": str(tmp_path / "nope.json"), "file": "a.py"})
+    assert res.status_code == 404
+    assert "error" in res.get_json()
+
+
+def test_api_overview_corrupt_json_is_400_not_500(client, tmp_path):
+    bad = tmp_path / "corrupt.json"
+    bad.write_text("{not valid json", encoding="utf-8")
+    res = client.get("/api/overview", query_string={"aif_path": str(bad)})
+    assert res.status_code == 400
+    assert "error" in res.get_json()
+
+
+def test_find_free_port_returns_preferred_when_free():
+    # an ephemeral port from the OS is (almost certainly) free
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        free_port = s.getsockname()[1]
+    assert gui_server._find_free_port(free_port) == free_port
+
+
+def test_find_free_port_skips_a_port_in_use():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        occupied_port = s.getsockname()[1]
+        found = gui_server._find_free_port(occupied_port)
+        assert found != occupied_port
+        assert occupied_port < found <= occupied_port + 49

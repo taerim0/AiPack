@@ -23,12 +23,16 @@ def resolve_dependency(dep: str, stem_map: dict) -> str | None:
 
 
 class CycleError(Exception):
-    """Raised by move_file() when reparenting a file would create a dependency cycle."""
+    """Raised by move_file()/add_dependency() when adding an edge would
+    create a dependency cycle. from_file/to_file name the edge that was
+    attempted (from_file would depend on to_file), regardless of which
+    function's own internal has_cycle() call order produced it.
+    """
 
     def __init__(self, from_file: str, to_file: str):
         self.from_file = from_file
         self.to_file = to_file
-        super().__init__(f"moving {from_file!r} under {to_file!r} would create a cycle")
+        super().__init__(f"{from_file!r} depending on {to_file!r} would create a cycle")
 
 
 def has_cycle(files: dict, stem_map: dict, from_file: str, to_file: str) -> bool:
@@ -76,7 +80,11 @@ def move_file(files: dict, file_name: str, new_parent: str) -> dict:
 
     stem_map = build_stem_map(files.keys())
     if has_cycle(files, stem_map, file_name, new_parent):
-        raise CycleError(file_name, new_parent)
+        # the edge this move adds is new_parent -> file_name (new_parent now
+        # depends on file_name), so that's the edge CycleError should name --
+        # not (file_name, new_parent), which is has_cycle()'s own internal
+        # walk direction, not the human-facing edge.
+        raise CycleError(new_parent, file_name)
 
     # remove file_name from wherever it's currently listed as a dependency
     for data in files.values():
@@ -85,6 +93,61 @@ def move_file(files: dict, file_name: str, new_parent: str) -> dict:
 
     files.setdefault(new_parent, {}).setdefault("dependencies", [])
     files[new_parent]["dependencies"].append(file_name)
+
+    return files
+
+
+def add_dependency(files: dict, file_name: str, target: str) -> dict:
+    """Adds a single dependency edge file_name -> target (file_name now
+    depends on target) onto file_name's own `dependencies` list only -- no
+    side effects on any other file's list, unlike move_file() which strips
+    file_name from every existing reference first. This is the "link" half
+    of the GUI's per-edge relationship editor: since a file can legitimately
+    be depended on by more than one other file, editing one edge shouldn't
+    touch any of the others.
+
+    A no-op if the edge already exists (matched by resolved target, so a raw
+    import path and an already-pinned file name for the same file don't
+    both get added). Raises ValueError if file_name/target aren't both in
+    `files` (or are the same file), and CycleError if the edge would close a
+    dependency cycle -- the same has_cycle() guard move_file() uses.
+    """
+    if file_name not in files:
+        raise ValueError(f"unknown file: {file_name}")
+    if target not in files:
+        raise ValueError(f"unknown file: {target}")
+    if file_name == target:
+        raise ValueError("a file can't depend on itself")
+
+    stem_map = build_stem_map(files.keys())
+    # the edge being added is file_name -> target; it closes a cycle exactly
+    # when target can already (transitively) reach file_name.
+    if has_cycle(files, stem_map, target, file_name):
+        raise CycleError(file_name, target)
+
+    deps = files[file_name].setdefault("dependencies", [])
+    if not any(resolve_dependency(d, stem_map) == target for d in deps):
+        deps.append(target)
+
+    return files
+
+
+def remove_dependency(files: dict, file_name: str, target: str) -> dict:
+    """Removes the dependency edge file_name -> target from file_name's own
+    `dependencies` list (matched by resolved target, same as move_file()'s
+    matching -- works whether the underlying entry is a raw import path or
+    an already-pinned file name). The "unlink" half of the GUI's per-edge
+    relationship editor, add_dependency()'s counterpart.
+
+    A no-op if no such edge exists. Raises ValueError if file_name isn't in
+    `files`. Mutates and returns `files`.
+    """
+    if file_name not in files:
+        raise ValueError(f"unknown file: {file_name}")
+
+    stem_map = build_stem_map(files.keys())
+    deps = files[file_name].get("dependencies", [])
+    files[file_name]["dependencies"] = [d for d in deps if resolve_dependency(d, stem_map) != target]
 
     return files
 
