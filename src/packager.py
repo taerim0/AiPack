@@ -10,6 +10,7 @@ from extract.code.extractor import extract_signatures, extract_dependencies, ext
 from extract.code.compressor import compress_file
 from tokenizer import analyze_tokens_with_payload
 from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analyze_prompt
+from freshness import build_manifest
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
 RESULT_DIR = Path(__file__).parent.parent / "result"
@@ -326,7 +327,14 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True) -> dict:
                 "compressed": data["compressed"]
             }
             for fp, data in files_data.items()
-        }
+        },
+        # Working state, not part of the shipped aif.json: a {file: content
+        # hash} snapshot of exactly what was packed, so a later
+        # freshness.check_freshness() call can tell whether this output has
+        # drifted from the files on disk without re-running any of the above.
+        # save_aif() pulls this out into a sibling <name>.cache.json, the
+        # same way it pulls `compressed` out into <name>.detail.json.
+        "_manifest": build_manifest(selected, root_path),
     }
 
     # delete the checkpoint on success
@@ -341,14 +349,19 @@ def save_aif(aif: dict, output_path: str | None = None) -> None:
     rather than the caller's cwd, so `pack` writes to the same place regardless of
     where it's invoked from.
 
-    Splits `compressed` out of each file entry into a sibling "<name>.detail.json"
-    keyed the same way as `files`. aif.json (summary + relationships) is what an
-    AI reads by default -- for a file with no compressed body to strip (README,
-    config, lang files, ...) `compressed` is close to the raw original, so
-    shipping it unconditionally on every file undoes the token savings for
-    exactly the files that benefit least from it. Actually fetching detail.json
-    only for files an AI decides it needs (e.g. via an MCP tool) is future work;
-    for now this just keeps that data on disk instead of discarding it.
+    Splits two things out of `aif` into sibling files, keyed the same way as
+    `files`:
+    - `compressed` -> "<name>.detail.json". aif.json (summary + relationships)
+      is what an AI reads by default -- for a file with no compressed body to
+      strip (README, config, lang files, ...) `compressed` is close to the raw
+      original, so shipping it unconditionally on every file undoes the token
+      savings for exactly the files that benefit least from it. mcp_server.py's
+      get_detail tool is what actually fetches detail.json today, only for
+      files an AI decides it needs.
+    - `_manifest` -> "<name>.cache.json" (flat, not per-file). A {file: content
+      hash} snapshot of what was packed, for freshness.check_freshness() to
+      compare against later -- not part of aif.json itself, since it's
+      packaging-internal bookkeeping an AI reading the project has no use for.
     """
     if output_path is None:
         RESULT_DIR.mkdir(exist_ok=True)
@@ -357,13 +370,16 @@ def save_aif(aif: dict, output_path: str | None = None) -> None:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    manifest = aif.get("_manifest")
+
     lean_files = {}
     detail = {}
     for name, data in aif["files"].items():
         lean_files[name] = {k: v for k, v in data.items() if k != "compressed"}
         detail[name] = {"compressed": data.get("compressed", "")}
 
-    lean_aif = {**aif, "files": lean_files}
+    lean_aif = {k: v for k, v in aif.items() if k != "_manifest"}
+    lean_aif["files"] = lean_files
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(lean_aif, f, ensure_ascii=False, indent=2)
@@ -373,3 +389,9 @@ def save_aif(aif: dict, output_path: str | None = None) -> None:
     with open(detail_path, "w", encoding="utf-8") as f:
         json.dump(detail, f, ensure_ascii=False, indent=2)
     print(f"📦 상세 정보(compressed) 저장됨: {detail_path}")
+
+    if manifest is not None:
+        cache_path = output_path.with_name(f"{output_path.stem}.cache.json")
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        print(f"🗂️  캐시(해시) 저장됨: {cache_path}")

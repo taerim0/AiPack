@@ -14,6 +14,7 @@ from corrector import correct_aif
 from edits import finalize_aif
 from file.relationship import build_tree, print_tree as print_dependency_tree
 from search import search_files, read_detail_range
+from freshness import check_freshness
 
 
 def main():
@@ -68,6 +69,9 @@ def main():
     de.add_argument("--start", type=int, default=None, help="시작 줄 번호 (1-based)")
     de.add_argument("--end", type=int, default=None, help="끝 줄 번호 (1-based, 포함)")
 
+    fr = sub.add_parser("freshness", help="aif.json이 최신 상태인지 확인 (해시 비교, LLM 호출 없음)")
+    fr.add_argument("path", help="프로젝트 폴더 경로")
+    fr.add_argument("cache_path", help="<name>.cache.json 경로")
 
     args = parser.parse_args()
 
@@ -280,6 +284,25 @@ def main():
             return
 
         print(read_detail_range(entry.get("compressed", ""), args.start, args.end))
+
+    elif args.command == "freshness":
+        with open(args.cache_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        files = collect_files(args.path)
+        safe_files = scan_files(files)["safe"]
+        report = check_freshness(safe_files, args.path, manifest)
+
+        if not report.is_stale:
+            print("✅ 최신 상태 — 변경된 파일 없음")
+        else:
+            print("⚠️  aif.json이 오래됐습니다")
+            if report.changed:
+                print(f"  변경됨 ({len(report.changed)}): {', '.join(report.changed)}")
+            if report.added:
+                print(f"  추가됨 ({len(report.added)}): {', '.join(report.added)}")
+            if report.removed:
+                print(f"  삭제됨 ({len(report.removed)}): {', '.join(report.removed)}")
 
 if __name__ == "__main__":
     main()
