@@ -2,11 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Directory-scoped detail lives in nested CLAUDE.md files, loaded automatically when you're working in that subtree — this file stays high-level on purpose:
+- `src/extract/CLAUDE.md` — Tree-sitter code compression/extraction (`languages.py`/`parser.py`/`extractor.py`/`compressor.py`) + the non-Tree-sitter text compressors (json/markdown/txt).
+- `src/file/CLAUDE.md` — file collection, security scanning, and the dependency-graph API (`collector.py`/`scanner.py`/`selector.py`/`relationship.py`).
+
 ## What this is
 
-Ziplex converts a local project into `aif.json` — a structured, token-reduced context format ("AIF") that an AI can consume instantly instead of reading raw files. It combines Tree-sitter-based code compression/extraction, an LLM summarization pass (Gemini), and a human correction step.
+Ziplex converts a local project into `aif.json` — a structured, token-reduced context format ("AIF") that an AI can consume instantly instead of reading raw files. It combines Tree-sitter-based code compression/extraction, an LLM summarization pass (Gemini), and an optional human correction step.
 
-`aif.json` itself only ever carries summaries + relationships, not full per-file code — see `pack` output below.
+`aif.json` itself only ever carries summaries + relationships, not full per-file code — see the shape at the bottom of this file.
 
 ## Commands
 
@@ -20,34 +24,38 @@ Requires a `.env` with `GEMINI_API_KEY=...` (read via `python-dotenv` in `src/ll
 
 Run any subcommand from repo root:
 ```
-python src/cli.py pack <project_path>              # full pipeline, interactive file selection + correction
-python src/cli.py pack <project_path> --auto        # skip interactive selection, include all safe files
-python src/cli.py pack <project_path> -o out.json   # custom output path (also writes out.detail.json)
+python src/cli.py pack <project_path>                              # full pipeline, interactive file selection + correction
+python src/cli.py pack <project_path> --auto                       # skip interactive selection, include all safe files
+python src/cli.py pack <project_path> --auto-correct                # skip interactive correction, auto-accept LLM output
+python src/cli.py pack <project_path> --auto --auto-correct         # non-interactive*, for CI/scripted use
+python src/cli.py pack <project_path> -o out.json                  # custom output path (also writes out.detail.json)
 
 python src/cli.py collect <project_path>            # just file collection + security scan
 python src/cli.py tokens <project_path>             # token count, before/after compression
 python src/cli.py tree <project_path>                # dependency tree only
 python src/cli.py signatures|dependencies|api|compress|debug <single_file>
 ```
+*`--auto --auto-correct` skips `corrector.py` entirely, but `packager.py`'s `handle_llm_failure()` (when rules/prompt generation exhausts its retries) still falls back to an `input()` prompt regardless of these flags — under heavy LLM rate-limiting this can still block on stdin. Known gap, not yet fixed.
 
-There is no automated test suite (no `tests/`, no pytest config). `testfiles/` is sample input used for manual, ad-hoc runs of the CLI against — not a test harness.
+Tests (`tests/`, pytest via `pytest.ini` which puts `src/` on `pythonpath`):
+```
+pip install -r requirement-dev.txt   # adds pytest on top of requirement.txt
+pytest
+```
+Covers the deterministic, non-LLM logic only — compressors, extractor, `file/collector.py`'s ignore/binary filtering, `file/relationship.py`'s graph ops, `edits.py`'s pure setters, and `tokenizer.py`'s counting. Nothing calls Gemini or needs `GEMINI_API_KEY`. `testfiles/` is separate — sample input for manual, ad-hoc CLI runs, not part of the test suite.
 
 ## Architecture
 
-`src/cli.py` is a thin argparse dispatcher; all real logic lives in the modules it calls. The `pack` command runs the full pipeline end to end, in this order:
+`src/cli.py` is a thin argparse dispatcher; all real logic lives in the modules it calls. The `pack` command runs the full pipeline end to end:
 
-1. **`file/collector.py`** — walks the target project, excluding `DEFAULT_IGNORE` patterns plus anything in the project's own `.gitignore` (via `pathspec`).
-2. **`file/scanner.py`** — security pass over collected files. Tries `secretlint` as a subprocess first; if secretlint isn't available or errors, falls back to a regex pattern list (`SENSITIVE_PATTERNS`). Files flagged here are excluded from everything downstream.
-3. **`file/selector.py`** — interactive terminal prompt for the user to pick which safe files to include (skipped by `--auto`).
-4. **`extract/code/parser.py`** — maps file extension → Tree-sitter `Language`/`Parser` (`LANGUAGE_MAP`: `.py`, `.java`, `.ts`, `.js`). Extending language support means adding an entry here.
-5. **`extract/code/extractor.py`** — walks the Tree-sitter AST to pull `signatures` (function defs, per `FUNCTION_NODE_TYPES`), `dependencies` (import statements), and `api` (decorator-based route detection, e.g. Flask-style `@app.get(...)`).
-6. **`extract/code/compressor.py`** — strips function bodies (replaces with a `⋮----` marker) while keeping signatures/structure, to cut tokens without losing shape.
-7. **`tokenizer.py`** — counts tokens per model encoding (`MODEL_ENCODINGS`/`MODEL_MAX_TOKENS`) using `tiktoken`. Two comparisons live here and are not interchangeable: `analyze_tokens_with_compression` (used by the standalone `tokens` CLI command, before any LLM call) measures original vs. just the compressed body text; `analyze_tokens_with_payload` (used by `pack`, after summaries exist) measures original vs. just the per-file `summary` — the only per-file field that actually ships in the saved `aif.json` (see step 12) — which is what an AI reading `aif.json` really pays for.
-8. **`llm.py`** — calls the Gemini API (`gemini-flash-latest`) directly via `requests` (not the Gemini SDK) for four jobs: per-file summary (code files are summarized from their extracted `signatures`/`dependencies`; non-code files are summarized from their already-compressed text, not a fresh raw read), coding-rule inference across all signatures, a project-level AI guide prompt, and (unused by `pack` currently) cross-file relationship inference. Retries on HTTP 429/503 with backoff; expects strict-JSON responses and strips markdown code fences (`clean_json`).
-9. **`packager.py`** (`pack()`) — orchestrates steps 1–8, and owns **checkpointing**: if an LLM call keeps failing, `handle_llm_failure()` lets the user retry, type a manual value, or save a checkpoint to `checkpoint/<project_name>.json` and exit; the next `pack` run on the same path auto-detects and offers to resume from it. `pack()`'s returned `files.{name}` still carries all five fields (`summary`, `signatures`, `dependencies`, `api`, `compressed`) — steps 10 and 12 below are what pare it down for the saved output.
-10. **`corrector.py`** (`correct_aif()`) — after packing, walks the user through correcting the project name, AI guide, rules, and per-file summaries, then interactively lets them reparent files in the dependency tree (with cycle detection) before building the final `relationships` map. `signatures`/`dependencies`/`api` are working state up to this point (dependencies drives the reparenting and `relationships`; signatures fed the rules pass back in `packager.py`) — once `relationships` is built, `correct_aif()` prunes all three from each file entry before returning: `dependencies` is now fully represented by `relationships`, and `signatures`/`api` duplicate what's already inline in `compressed` (only function bodies are stripped, not signatures/imports/decorators).
-11. **`file/relationship.py`** — builds/prints the dependency tree, splitting each file's deps into `internal` (another collected file) vs `external` (third-party/stdlib).
-12. **`packager.py`** (`save_aif()`) — the last split before disk: pulls `compressed` out of each file entry into a sibling `<name>.detail.json` (`{file: {compressed}}`), so the saved `aif.json` only ever carries `summary` per file. This is deliberate, not an oversight — for files with little or nothing to strip (README, config, lang files, ...) `compressed` is close to the raw original, so shipping it on every file unconditionally would undo the token savings for exactly the files that benefit least from it. Fetching `detail.json` on demand per file (e.g. via an MCP tool, once summary + relationships suggest it's worth a closer look) is future work — for now the data is just kept on disk, not wired up to anything that reads it back in.
+1. **`file/collector.py`** → **`file/scanner.py`** → **`file/selector.py`** — collect, security-scan, and (unless `--auto`) interactively select files. Detail: `src/file/CLAUDE.md`.
+2. **`extract/code/*`** + **`extract/text/*`** — Tree-sitter signature/dependency/API extraction and body-stripping compression for code; regex-based compression for JSON/Markdown/plain text. Detail: `src/extract/CLAUDE.md`.
+3. **`tokenizer.py`** — counts tokens per model (`tiktoken`). `analyze_tokens_with_compression` (the standalone `tokens` command) measures original vs. compressed body only; `analyze_tokens_with_payload` (used by `pack`) measures original vs. just the per-file `summary` — the only per-file field that actually ships in the saved `aif.json`.
+4. **`llm.py`** — Gemini REST calls (`gemini-flash-latest`, via `requests`, not the SDK) for per-file summaries, coding-rule inference, and the project-level AI guide. `LLMProvider` (a `typing.Protocol`) is the seam for adding another model — implement `generate(prompt, retry) -> str` and register it in `PROVIDERS`. Retries on HTTP 429/503 with backoff.
+5. **`packager.py`** (`pack()`) — orchestrates 1–4, and owns **checkpointing**: `handle_llm_failure()` lets a failing LLM call be retried, answered manually, or checkpointed to `checkpoint/<project_name>.json` for the next `pack` run on the same path to auto-detect and resume.
+6. **`edits.py`** + **`file/relationship.py`** — the pure, I/O-free editing API (no `input()`/`print()`): field setters, `finalize_aif()` (builds `relationships`, prunes now-redundant `signatures`/`dependencies`/`api`), and the dependency-graph operations (`build_tree`/`move_file`/`has_cycle`). This is the seam a future MCP server or GUI backend would call directly with structured input instead of parsed terminal strings. Detail (especially `has_cycle`'s traversal direction — easy to get backwards): `src/file/CLAUDE.md`.
+7. **`corrector.py`** — the thin interactive CLI wrapper around 6: walks the user through project name/guide/rules/summaries/reparenting, calling the matching pure function for each accepted change. `--auto-correct` skips this module entirely and calls `edits.finalize_aif()` directly.
+8. **`packager.py`** (`save_aif()`) — pulls `compressed` out of each file entry into a sibling `<name>.detail.json`, so the saved `aif.json` only ever carries `summary` per file (files with little to strip, like README/config/lang files, would otherwise cost more tokens shipped than they save).
 
 The final `aif.json` shape: `{ project: {name, prompt}, rules: [...], tokens: {...}, files: {name: {summary}}, relationships: {...} }`, with a sibling `<name>.detail.json` shaped `{ file-name: {compressed}, ... }` (same file-name keys as `files`, flat — not nested under a `files` key).
 
