@@ -1,5 +1,7 @@
 import os
 import time
+from typing import Protocol
+
 import requests
 from dotenv import load_dotenv
 
@@ -16,13 +18,29 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
+class LLMProvider(Protocol):
+    """The contract every provider must satisfy to be usable via generate().
+
+    Structural (Protocol), not a base class to inherit from: a provider just
+    needs a matching generate() method, nothing registers or declares
+    conformance. Kept minimal on purpose -- when a second provider actually
+    gets added, this is the seam to grow (e.g. auth/config passed through
+    __init__ can differ freely per provider; only generate()'s shape matters
+    here) and the natural point to split providers into their own module
+    (or package, if there end up being several) instead of stacking classes
+    with very different error-handling/retry logic into this one file.
+    """
+
+    def generate(self, prompt: str, retry: int = 5) -> str: ...
+
+
 class GeminiProvider:
     """Gemini REST API provider.
 
     To add another LLM, implement generate(prompt, retry) -> str like this
-    class and register it in PROVIDERS below with one line. The analyze_*
-    functions only ever call the module-level generate(), regardless of
-    which provider is active.
+    class (see LLMProvider above) and register it in PROVIDERS below with one
+    line. The analyze_* functions only ever call the module-level generate(),
+    regardless of which provider is active.
     """
 
     def __init__(self, api_key: str | None = None, model: str = "gemini-flash-latest"):
@@ -60,11 +78,11 @@ class GeminiProvider:
 
 # Registry of supported providers. To add a new LLM, add a class here and let
 # LLM_PROVIDER select it (e.g. PROVIDERS["claude"] = ClaudeProvider).
-PROVIDERS = {
+PROVIDERS: dict[str, type[LLMProvider]] = {
     "gemini": GeminiProvider,
 }
 
-_provider = PROVIDERS[os.getenv("LLM_PROVIDER", "gemini")]()
+_provider: LLMProvider = PROVIDERS[os.getenv("LLM_PROVIDER", "gemini")]()
 
 
 def generate(prompt: str, retry: int = 5) -> str:
