@@ -447,7 +447,11 @@ async function renderPackJob(jobId) {
     });
 
     cancelButton.addEventListener("click", async () => {
+      // Disable both, not just this one -- otherwise a click here followed
+      // fast enough by a click on "완료 및 저장" (still enabled) fires both
+      // requests before either response comes back.
       cancelButton.disabled = true;
+      submitButton.disabled = true;
       try { await apiPost("/api/pack/cancel", { job_id: jobId }); } catch (e) { /* best-effort */ }
       location.hash = "#/";
     });
@@ -487,7 +491,11 @@ async function renderPackJob(jobId) {
     }
     since = data.log_len;
 
-    if (data.state === "running") {
+    // "finalizing" (pack_service.py's transient state while submit_review()
+    // commits) is only ever observed here if a reload/second-tab poll lands
+    // in that narrow window -- keep polling through it the same as
+    // "running" rather than falling into the generic error branch below.
+    if (data.state === "running" || data.state === "finalizing") {
       setTimeout(poll, 1000);
       return;
     }

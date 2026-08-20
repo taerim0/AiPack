@@ -288,6 +288,79 @@ def test_remove_dependency_in_job_unlinks_only_that_edge(tmp_path, monkeypatch):
     assert tree["a.py"]["internal"] == ["c.py"]
 
 
+def test_get_review_reflects_edits_made_via_add_dependency_in_job(tmp_path, monkeypatch):
+    # Regression test: get_review() used to return a snapshot cached once at
+    # job-pause time, so a second fetch (e.g. a page reload) after a link/
+    # unlink edit would show a stale relationship graph even though the edit
+    # was already applied to the job's real aif and would be what actually
+    # gets saved.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "a.py", "def a():\n    pass\n")
+    _write(project / "b.py", "def b():\n    pass\n")
+
+    job_id = pack_service.start_pack_job(str(project), selected_files=["a.py", "b.py"])
+    _wait(job_id)
+
+    assert pack_service.get_review(job_id)["tree"]["a.py"]["internal"] == []
+
+    pack_service.add_dependency_in_job(job_id, "a.py", "b.py")
+
+    assert pack_service.get_review(job_id)["tree"]["a.py"]["internal"] == ["b.py"]
+
+
+def test_add_dependency_in_job_after_cancel_raises_value_error_not_crash(tmp_path, monkeypatch):
+    # Regression test: cancel_job() sets job["aif"] = None; a mutation that
+    # had already fetched the job but not yet re-checked for None used to
+    # dereference it directly (job["aif"]["files"]) and blow up with a raw
+    # TypeError instead of the same clean ValueError every other invalid-
+    # state case raises.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "a.py", "def a():\n    pass\n")
+    _write(project / "b.py", "def b():\n    pass\n")
+
+    job_id = pack_service.start_pack_job(str(project), selected_files=["a.py", "b.py"])
+    _wait(job_id)
+    pack_service.cancel_job(job_id)
+
+    try:
+        pack_service.add_dependency_in_job(job_id, "a.py", "b.py")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_cancel_job_after_submit_review_is_a_noop(tmp_path, monkeypatch):
+    # Regression test: cancel_job() and submit_review() used to both be able
+    # to act on a job in state "reviewing" independently, so a cancel racing
+    # a submit that had already started committing could flip a "done" job
+    # back to "error" after its output was already written to disk.
+    # submit_review() now moves the job out of "reviewing" (into
+    # "finalizing", then "done") before doing any of that I/O, so a cancel
+    # arriving anytime after submit_review() has been called at all is
+    # rejected instead of silently reverting an already-saved result.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "a.py", "def a():\n    pass\n")
+    output_path = tmp_path / "out" / "project.json"
+
+    job_id = pack_service.start_pack_job(str(project), str(output_path), selected_files=["a.py"])
+    _wait(job_id)
+    pack_service.submit_review(job_id)
+
+    assert pack_service.cancel_job(job_id) is False
+    status = pack_service.get_job_status(job_id)
+    assert status["state"] == "done"
+    assert output_path.exists()
+
+
 def test_add_dependency_in_job_unknown_job_raises_value_error():
     try:
         pack_service.add_dependency_in_job("no-such-job", "a.py", "b.py")
@@ -321,6 +394,35 @@ def test_add_dependency_in_job_persists_into_the_finalized_output(tmp_path, monk
 
     saved = json.loads(output_path.read_text(encoding="utf-8"))
     assert saved["relationships"]["a.py"]["internal"] == ["b.py"]
+
+
+def test_concurrent_jobs_do_not_cross_contaminate_logs(tmp_path, monkeypatch):
+    # Regression test: _run()/submit_review() used to capture print() output
+    # via a bare contextlib.redirect_stdout(...), which reassigns the single
+    # process-wide sys.stdout with no locking -- two jobs' captured blocks
+    # overlapping in time (exactly what running two packs at once does)
+    # could each clobber the other's redirect, so one job's progress lines
+    # could end up appended to a different job's log instead of its own.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project_a = tmp_path / "project_alpha"
+    _write(project_a / "alpha_only.py", "def alpha():\n    pass\n")
+    project_b = tmp_path / "project_beta"
+    _write(project_b / "beta_only.py", "def beta():\n    pass\n")
+
+    job_a = pack_service.start_pack_job(str(project_a), selected_files=["alpha_only.py"])
+    job_b = pack_service.start_pack_job(str(project_b), selected_files=["beta_only.py"])
+    status_a = _wait(job_a)
+    status_b = _wait(job_b)
+
+    log_a = "\n".join(pack_service.get_job_status(job_a)["log"])
+    log_b = "\n".join(pack_service.get_job_status(job_b)["log"])
+
+    assert status_a["state"] == "reviewing"
+    assert status_b["state"] == "reviewing"
+    assert "alpha_only.py" in log_a and "beta_only.py" not in log_a
+    assert "beta_only.py" in log_b and "alpha_only.py" not in log_b
 
 
 def test_get_job_status_since_returns_only_new_lines(tmp_path, monkeypatch):

@@ -4,9 +4,10 @@ packager.pack() is long-running (real LLM calls, potentially minutes on a
 real project) and talks to the user via print()/input() -- wrong to run
 straight inside a Flask request handler. This module runs one pack in a
 background thread and gives the routes something to poll and act on: a job
-id, a running/reviewing/done/error state, pack()'s own print() lines
-captured into a per-job log list, and (once analysis finishes) a pause point
-where a human reviews and corrects the result before it's saved.
+id, a running/reviewing/finalizing/done/error state, pack()'s own print()
+lines captured into a per-job log list, and (once analysis finishes) a
+pause point where a human reviews and corrects the result before it's
+saved.
 
 Interactive parity with the CLI's plain `pack <path>` (no --auto, no
 --auto-correct), adapted for a browser instead of a terminal:
@@ -42,10 +43,22 @@ Interactive parity with the CLI's plain `pack <path>` (no --auto, no
     dragged. add_dependency_in_job()/remove_dependency_in_job() wrap
     file/relationship.py's add_dependency()/remove_dependency() instead --
     a per-edge link/unlink pair that only ever touches the one file/target
-    edge being edited, never any other file's list. The review payload's
-    `tree` (build_tree()'s shape) is what the GUI renders this over: a flat
+    edge being edited, never any other file's list. get_review()'s `tree`
+    (build_tree()'s shape) is what the GUI renders this over: a flat
     per-file list of outgoing edges, each internal one individually
     removable, plus a picker to link a new one.
+
+Concurrency: each job gets its own `threading.Lock` (job["lock"]), acquired
+for every read/mutation of that job's own fields (state/aif/log/result/
+error) -- see _lookup_job()'s docstring. This means an operation on job A
+(a status poll, a link/unlink edit, a cancel) never blocks behind an
+operation on unrelated job B; the module-level `_jobs_lock` only guards
+inserting into / looking up from the `_jobs` dict itself, which is quick
+enough to never meaningfully contend. print()-capturing (see
+_capture_for_job()) is the one deliberate exception: it serializes across
+*all* jobs via a single `_stdout_capture_lock`, because sys.stdout is one
+process-wide global no per-job lock can partition -- see that function's
+docstring for why.
 
 Jobs live in memory only (module-level dict) -- gone on server restart, same
 lifetime as everything else gui_server.py holds (see its `_default_config`).
@@ -69,7 +82,24 @@ from file.scanner import scan_files
 from file.textutil import relative_key as _rel_key
 
 _jobs: dict[str, dict] = {}
-_jobs_lock = threading.Lock()
+_jobs_lock = threading.Lock()  # guards _jobs itself (insert/lookup) only -- see module docstring
+
+# contextlib.redirect_stdout reassigns the single process-wide sys.stdout,
+# which isn't thread-safe on its own: two jobs whose print()-capturing
+# blocks overlap in time (starting a second pack while an earlier one is
+# still analyzing, or finalizing one job while another is still running)
+# could each clobber the other's redirect, corrupting both jobs' logs, or
+# worse, leaving sys.stdout stuck pointed at an already-finished job's
+# writer. This lock makes that shared resource's use exclusive: only one
+# job's capturing block runs at a time, process-wide. The cost is that two
+# jobs' analysis phases can no longer log concurrently -- acceptable for a
+# single-user local tool where running two packs at once is an edge case,
+# not the primary workflow, and far simpler (and provably correct) than
+# routing print() by thread identity, which would also require every
+# ThreadPoolExecutor worker thread packager.pack() spins up internally to
+# inherit that routing -- not something this module could arrange from the
+# outside without packager.py's cooperation.
+_stdout_capture_lock = threading.Lock()
 
 # Same cap corrector.py's terminal prompt uses for a flagged file's shown
 # signatures -- enough to judge the mismatch without dumping a huge list.
@@ -77,11 +107,11 @@ _SIGNATURES_SHOWN = 10
 
 
 class _LogWriter:
-    """Stands in for stdout during one pack job: buffers partial writes into
-    complete lines and appends each to the job's log list under
-    `_jobs_lock`. Without this, pack()'s print() calls would go to the
-    server process's own stdout, which a polling GUI client has no way to
-    read.
+    """Stands in for stdout during one job's captured block (see
+    _capture_for_job()): buffers partial writes into complete lines and
+    appends each to the job's log list under that job's own lock. Without
+    this, pack()'s print() calls would go to the server process's own
+    stdout, which a polling GUI client has no way to read.
     """
 
     def __init__(self, job: dict):
@@ -92,12 +122,22 @@ class _LogWriter:
         self._buf += s
         while "\n" in self._buf:
             line, self._buf = self._buf.split("\n", 1)
-            with _jobs_lock:
+            with self._job["lock"]:
                 self._job["log"].append(line)
         return len(s)
 
     def flush(self) -> None:
         pass
+
+
+@contextlib.contextmanager
+def _capture_for_job(job: dict):
+    """contextlib.redirect_stdout(_LogWriter(job)), plus _stdout_capture_lock
+    held for the duration -- see that lock's module-level comment for why a
+    plain redirect_stdout isn't safe to use directly here.
+    """
+    with _stdout_capture_lock, contextlib.redirect_stdout(_LogWriter(job)):
+        yield
 
 
 def list_selectable_files(project_path: str) -> dict:
@@ -153,9 +193,9 @@ def _build_review(aif: dict) -> dict:
     }
 
 
-def _run(job: dict, project_path: str, output_path: str | None, no_cache: bool, selected_files: list[str]) -> None:
+def _run(job: dict, project_path: str, no_cache: bool, selected_files: list[str]) -> None:
     try:
-        with contextlib.redirect_stdout(_LogWriter(job)):
+        with _capture_for_job(job):
             aif = packager.pack(
                 project_path, interactive=False, use_cache=not no_cache, preselected=selected_files
             )
@@ -169,12 +209,11 @@ def _run(job: dict, project_path: str, output_path: str | None, no_cache: bool, 
                     "패킹이 완료되지 않았습니다 (선택된 파일이 없거나, "
                     "반복된 LLM 오류로 체크포인트에 저장 후 중단됨). 로그를 확인하세요."
                 )
-        with _jobs_lock:
+        with job["lock"]:
             job["state"] = "reviewing"
             job["aif"] = aif
-            job["review"] = _build_review(aif)
     except Exception as e:
-        with _jobs_lock:
+        with job["lock"]:
             job["state"] = "error"
             job["error"] = str(e)
 
@@ -186,8 +225,14 @@ def start_pack_job(
     immediately. selected_files (relative names, from list_selectable_files()'s
     "safe" list) becomes pack()'s `preselected` -- see this module's docstring
     for why file selection has to happen before the job starts rather than
-    inside it. The job pauses in state "reviewing" once analysis finishes;
-    see get_review()/submit_review().
+    inside it. Omitting selected_files (None) is treated the same as an empty
+    list here -- packs nothing -- rather than falling through to pack()'s own
+    auto/interactive fallback for a bare `preselected=None`; gui_server.py's
+    route already 400s before ever calling this with no selection, so this
+    only matters for a future caller that skips that guard.
+
+    The job pauses in state "reviewing" once analysis finishes; see
+    get_review()/submit_review().
     """
     job_id = uuid.uuid4().hex
     job = {
@@ -196,17 +241,33 @@ def start_pack_job(
         "result": None,
         "error": None,
         "aif": None,
-        "review": None,
         "project_path": project_path,
         "output_path": output_path,
+        "lock": threading.Lock(),
     }
     with _jobs_lock:
         _jobs[job_id] = job
     thread = threading.Thread(
-        target=_run, args=(job, project_path, output_path, no_cache, selected_files or []), daemon=True
+        target=_run, args=(job, project_path, no_cache, selected_files or []), daemon=True
     )
     thread.start()
     return job_id
+
+
+def _lookup_job(job_id: str) -> dict:
+    """Looks up a job by id under `_jobs_lock`. Raises ValueError if unknown.
+    The returned dict is a stable reference -- jobs are only ever mutated in
+    place, never replaced or removed from `_jobs` -- so nothing needs to
+    keep holding `_jobs_lock` past this lookup; callers acquire the job's
+    own `lock` afterward for whatever they actually do with it, which is
+    what keeps unrelated jobs from contending with each other at all (see
+    the module docstring's Concurrency section).
+    """
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise ValueError(f"알 수 없는 job_id: {job_id}")
+    return job
 
 
 def get_job_status(job_id: str, since: int = 0) -> dict | None:
@@ -216,10 +277,11 @@ def get_job_status(job_id: str, since: int = 0) -> dict | None:
     can pass back the length it already has instead of re-fetching the whole
     log (potentially thousands of lines on a large project) on every poll.
     """
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is None:
-            return None
+    try:
+        job = _lookup_job(job_id)
+    except ValueError:
+        return None
+    with job["lock"]:
         return {
             "state": job["state"],
             "log": job["log"][since:],
@@ -231,29 +293,37 @@ def get_job_status(job_id: str, since: int = 0) -> dict | None:
 
 def get_review(job_id: str) -> dict | None:
     """None if job_id is unknown or the job hasn't reached "reviewing" yet
-    (still running, or already finalized/errored) -- the review payload only
-    exists in that one window. See _build_review() for its shape.
+    (still running, being finalized, or already done/errored) -- the review
+    payload only exists in that one window. Recomputed fresh from the job's
+    live `aif` on every call rather than cached, so it always reflects any
+    edits already applied via add_dependency_in_job()/remove_dependency_in_job()
+    -- an earlier version cached this at the moment the job first paused and
+    never invalidated it, so a second fetch (e.g. a page reload) could show
+    a relationship graph that no longer matched what was actually about to
+    be saved.
     """
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is None or job["state"] != "reviewing":
-            return None
-        return job["review"]
-
-
-def _require_reviewing_job(job_id: str) -> dict:
-    """The shared guard behind every mutation on a paused job (link/unlink/
-    submit): job_id has to exist and the job has to actually be paused in
-    "reviewing" -- anything else means there's no live `aif` dict to mutate.
-    Raises ValueError with a message safe to surface straight to the GUI.
-    """
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is None:
-            raise ValueError(f"알 수 없는 job_id: {job_id}")
+    try:
+        job = _lookup_job(job_id)
+    except ValueError:
+        return None
+    with job["lock"]:
         if job["state"] != "reviewing":
-            raise ValueError(f"이 작업은 검토 대기 상태가 아닙니다 (현재: {job['state']})")
-        return job
+            return None
+        return _build_review(job["aif"])
+
+
+def _require_reviewing(job: dict) -> None:
+    """Must be called with job["lock"] already held. Raises ValueError if
+    the job isn't currently paused in "reviewing" with a live `aif` --
+    anything else means there's nothing valid to mutate. Checking this and
+    the actual mutation under the same lock acquisition (every caller below
+    does) is what closes two races an earlier version of this module had:
+    cancel_job() swapping `aif` out from under a concurrent mutation, and
+    two concurrent mutations both passing a check (e.g. add_dependency()'s
+    cycle guard) before either had actually written anything yet.
+    """
+    if job["state"] != "reviewing" or job["aif"] is None:
+        raise ValueError(f"이 작업은 검토 대기 상태가 아닙니다 (현재: {job['state']})")
 
 
 def add_dependency_in_job(job_id: str, file_name: str, target: str) -> dict:
@@ -271,9 +341,11 @@ def add_dependency_in_job(job_id: str, file_name: str, target: str) -> dict:
     (gui_server.py) to turn into the right HTTP status rather than being
     swallowed here.
     """
-    job = _require_reviewing_job(job_id)
-    _add_dependency(job["aif"]["files"], file_name, target)
-    return build_tree(job["aif"]["files"])
+    job = _lookup_job(job_id)
+    with job["lock"]:
+        _require_reviewing(job)
+        _add_dependency(job["aif"]["files"], file_name, target)
+        return build_tree(job["aif"]["files"])
 
 
 def remove_dependency_in_job(job_id: str, file_name: str, target: str) -> dict:
@@ -283,25 +355,31 @@ def remove_dependency_in_job(job_id: str, file_name: str, target: str) -> dict:
     recomputed tree. Raises ValueError for an unknown job_id, a job not
     currently "reviewing", or an unknown file_name.
     """
-    job = _require_reviewing_job(job_id)
-    _remove_dependency(job["aif"]["files"], file_name, target)
-    return build_tree(job["aif"]["files"])
+    job = _lookup_job(job_id)
+    with job["lock"]:
+        _require_reviewing(job)
+        _remove_dependency(job["aif"]["files"], file_name, target)
+        return build_tree(job["aif"]["files"])
 
 
 def cancel_job(job_id: str) -> bool:
     """Discards a job waiting in "reviewing" without saving anything.
     Returns False (no-op) if job_id is unknown or it isn't in that state --
-    a running job can't be cancelled mid-analysis, and a done/errored one
-    has nothing left to cancel.
+    a running job can't be cancelled mid-analysis, and a done/errored/
+    finalizing one has nothing left to cancel (a submit_review() already in
+    flight has already moved a job out of "reviewing" -- see its own
+    docstring for why that ordering matters).
     """
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is None or job["state"] != "reviewing":
+    try:
+        job = _lookup_job(job_id)
+    except ValueError:
+        return False
+    with job["lock"]:
+        if job["state"] != "reviewing":
             return False
         job["state"] = "error"
         job["error"] = "사용자가 취소함"
         job["aif"] = None
-        job["review"] = None
     return True
 
 
@@ -322,36 +400,46 @@ def submit_review(
     cancelled) -- there's nothing valid to apply corrections to in any of
     those states.
     """
-    job = _require_reviewing_job(job_id)
-    aif = job["aif"]
+    job = _lookup_job(job_id)
+    with job["lock"]:
+        _require_reviewing(job)
+        aif = job["aif"]
 
-    if project_name:
-        set_project_name(aif, project_name)
-    if project_prompt:
-        set_project_prompt(aif, project_prompt)
-    if rules is not None:
-        aif["rules"] = list(rules)
-    for name, summary in (summaries or {}).items():
-        if summary and name in aif["files"]:
-            set_file_summary(aif, name, summary)
+        if project_name:
+            set_project_name(aif, project_name)
+        if project_prompt:
+            set_project_prompt(aif, project_prompt)
+        if rules is not None:
+            aif["rules"] = list(rules)
+        for name, summary in (summaries or {}).items():
+            if summary and name in aif["files"]:
+                set_file_summary(aif, name, summary)
+
+        # From here on `aif` is a reference this call alone owns.
+        # finalize_aif()/save_aif() below do real I/O (save_aif() prints,
+        # which itself needs this job's own lock via _LogWriter), so they
+        # have to run outside job["lock"] to avoid deadlocking against it --
+        # moving the job out of "reviewing" first is what keeps that window
+        # safe: every mutator above (cancel_job, add_dependency_in_job,
+        # remove_dependency_in_job) is gated on state == "reviewing", so none
+        # of them can touch this job's `aif` while it's being committed here.
+        job["state"] = "finalizing"
 
     try:
-        with contextlib.redirect_stdout(_LogWriter(job)):
+        with _capture_for_job(job):
             aif = finalize_aif(aif)
             packager.save_aif(aif, job["output_path"])
     except Exception as e:
-        with _jobs_lock:
+        with job["lock"]:
             job["state"] = "error"
             job["error"] = str(e)
             job["aif"] = None
-            job["review"] = None
         raise
 
     result_path = Path(job["output_path"]) if job["output_path"] else packager.RESULT_DIR / f"{aif['project']['name']}.json"
     result = {"aif_path": str(result_path), "project_path": job["project_path"]}
-    with _jobs_lock:
+    with job["lock"]:
         job["state"] = "done"
         job["result"] = result
         job["aif"] = None  # no longer needed, and keeps the job dict small
-        job["review"] = None
     return result
