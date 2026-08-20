@@ -78,6 +78,18 @@ def test_get_overview_via_call_tool(tmp_path):
     assert data["file_count"] == 2
 
 
+def test_list_files_via_call_tool(tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    result = _call("list_files", {"aif_path": aif_path})
+
+    assert result.is_error is False
+    data = _json_result(result)
+    assert data == {
+        "a.py": {"summary": "does a thing", "confidence": 1.0},
+        "b.py": {"summary": "uses a.py", "confidence": 1.0},
+    }
+
+
 def test_get_dependents_via_call_tool(tmp_path):
     aif_path = _write_sample_aif(tmp_path)
     result = _call("get_dependents", {"aif_path": aif_path, "file": "a.py"})

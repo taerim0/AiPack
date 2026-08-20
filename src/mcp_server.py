@@ -72,12 +72,20 @@ def get_overview(aif_path: str) -> dict:
 
 @mcp.tool()
 def list_files(aif_path: str) -> dict:
-    """Every file in the project mapped to its one-line summary. Use this to
-    decide which file (if any) is worth a get_detail call -- summaries are
-    already loaded here at effectively no cost; full source is not.
+    """Every file in the project mapped to its one-line summary and a
+    heuristic confidence score (0.0-1.0, see src/confidence.py) for how well
+    that summary's wording actually matches the file's extracted signatures
+    -- not a correctness guarantee, but a low score is a real reason to
+    fetch get_detail and check for yourself before trusting the summary.
+    Use this to decide which file (if any) is worth that closer look --
+    summaries are already loaded here at effectively no cost; full source
+    is not.
     """
     aif = _load_json(aif_path)
-    return {name: data.get("summary", "") for name, data in aif.get("files", {}).items()}
+    return {
+        name: {"summary": data.get("summary", ""), "confidence": data.get("confidence", 1.0)}
+        for name, data in aif.get("files", {}).items()
+    }
 
 
 @mcp.tool()

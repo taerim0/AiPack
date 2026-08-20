@@ -11,6 +11,7 @@ from extract.code.compressor import compress_file
 from tokenizer import analyze_tokens_with_payload
 from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analyze_prompt
 from freshness import build_manifest, check_freshness
+from confidence import estimate_confidence
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
 RESULT_DIR = Path(__file__).parent.parent / "result"
@@ -268,9 +269,12 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True, use_cache
             print(f"  ✅ {name}")
 
     # 5. LLM analysis
-    # Each file's summary is human-reviewed/corrected in correct_aif() later, so
-    # this skips the retry menu: try each file once in parallel and fill failures
-    # with a placeholder (a wrong summary still gets fixed in the next step).
+    # Each file's summary is human-reviewed/corrected in correct_aif() later
+    # (triaged by confidence -- see below -- so review effort scales with how
+    # many summaries actually look suspicious, not with project size), so
+    # this skips the retry menu: try each file once in parallel and fill
+    # failures with a placeholder (a wrong summary still gets fixed in the
+    # next step).
     print("\n🤖 LLM 분석 중...")
     pending = {
         fp: data for fp, data in files_data.items() if not data.get("summary")
@@ -286,6 +290,13 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True, use_cache
             summary = future.result() or "요약 생성 실패"
             files_data[fp]["summary"] = summary
             print(f"  ✅ {_rel_key(fp, root)}")
+
+    # Confidence signal for every summary (reused, checkpoint-restored, or
+    # freshly generated) -- free, no LLM call: just how much of the file's
+    # own signature vocabulary shows up in its summary. correct_aif() uses
+    # this to decide which summaries are worth prompting a human about.
+    for data in files_data.values():
+        data["confidence"] = estimate_confidence(data["summary"], data["signatures"])
 
     # extract rules (restored from checkpoint if available)
     rules = restored_rules
@@ -375,6 +386,7 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True, use_cache
         "files": {
             _rel_key(fp, root): {
                 "summary": data["summary"],
+                "confidence": data["confidence"],
                 "signatures": data["signatures"],
                 "dependencies": data["dependencies"],
                 "api": data["api"],

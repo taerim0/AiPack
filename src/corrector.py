@@ -18,6 +18,7 @@ from edits import (
     finalize_aif,
 )
 from file.relationship import build_stem_map, resolve_dependency, move_file, CycleError
+from confidence import triage
 
 
 def correct_relationships(aif: dict) -> dict:
@@ -149,13 +150,25 @@ def correct_aif(aif: dict) -> dict:
         except (ValueError, IndexError):
             print("  ⚠️  잘못된 입력")
 
-    # 4. Correct per-file summaries
+    # 4. Correct per-file summaries -- triaged by confidence (confidence.py):
+    # only summaries flagged low-confidence (their wording doesn't overlap
+    # with the file's own extracted signatures) get prompted. Reviewing
+    # every single file doesn't scale past a handful of them, so the rest
+    # are auto-kept -- still editable by hand in aif.json afterward.
     print(f"\n📄 파일별 Summary:")
-    for file_name, data in aif["files"].items():
-        print(f"\n  {file_name}: {data['summary']}")
+    needs_review, auto_kept = triage(aif["files"])
+
+    for file_name in needs_review:
+        data = aif["files"][file_name]
+        print(f"\n  ⚠️  {file_name} (신뢰도 {data.get('confidence', 1.0)}): {data['summary']}")
         new_summary = input("  수정 (엔터=유지): ").strip()
         if new_summary:
             set_file_summary(aif, file_name, new_summary)
+
+    if auto_kept:
+        print(f"\n  ✅ 신뢰도 높은 요약 {len(auto_kept)}개는 자동 유지됩니다 (필요하면 aif.json에서 직접 수정 가능):")
+        for file_name in auto_kept:
+            print(f"     {file_name}")
 
     aif = correct_relationships(aif)
     aif = finalize_aif(aif)

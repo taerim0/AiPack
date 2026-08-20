@@ -41,6 +41,12 @@ def test_pack_runs_end_to_end_with_mock_provider(tmp_path, monkeypatch):
         assert data["summary"] == "Mock summary for local testing."
         assert "compressed" in data, name
 
+    # confidence.py: MockProvider's canned summary doesn't mention main.py's
+    # actual signature ("add"), so it's correctly flagged low; README.md has
+    # no signatures to check against, so there's nothing to contradict
+    assert aif["files"]["main.py"]["confidence"] == 0.0
+    assert aif["files"]["README.md"]["confidence"] == 1.0
+
     assert "GPT-4o" in aif["tokens"]
     assert aif["tokens"]["GPT-4o"]["original"] > 0
 

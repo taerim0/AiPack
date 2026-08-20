@@ -34,6 +34,7 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 - **Text-aware compression beyond code** — dedicated compressors for JSON and Markdown (including embedded code fences) and plain text, using the same body-preserving philosophy as the code compressor.
 - **Security scanning built in** — `secretlint` first, regex fallback second; sensitive files never make it past collection.
 - **Human-in-the-loop correction, opt-in** — every LLM output (summaries, rules, project guide, dependency tree) is reviewable and editable before anything is saved, or skippable entirely with `--auto-correct`. File selection (`--auto`) and correction (`--auto-correct`) are independent flags, so `pack` can run fully headless for CI or scripted use.
+- **Review that scales with project size, not file count** — reviewing every summary by hand stops being realistic well before a project hits a few hundred files. Each summary gets a free, no-LLM-call confidence score (0.0-1.0, how much its wording actually overlaps with the file's real signatures) — only the ones that look questionable get prompted during correction; the rest are auto-kept and just listed. The score itself ships in `aif.json` too, so an agent reading it knows which summaries are worth double-checking with `get_detail` before trusting them.
 - **Honest token accounting** — `tiktoken`-based before/after comparison across GPT-4o, GPT-3.5, and GPT-4 encodings, measured against what actually ships in `aif.json`, not just the raw compression ratio.
 - **Lean output, detail on request** — `aif.json` stays small (summaries + relationships); the full compressed body per file lives in `detail.json`, fetched on demand by the MCP server's `get_detail` tool (see below) rather than shipped on every file up front.
 - **Resilient to LLM flakiness** — retries with backoff on rate limits, and a checkpoint system that lets a failed run resume later instead of restarting from scratch.
@@ -110,7 +111,7 @@ Want to smoke-test `pack` against a real project without waiting on Gemini? `LLM
   "project": { "name": "...", "prompt": "..." },
   "rules": ["..."],
   "tokens": { "GPT-4o": { "original": 3100, "compressed": 749, "saved_pct": 75.8 } },
-  "files": { "src/App.tsx": { "summary": "..." } },
+  "files": { "src/App.tsx": { "summary": "...", "confidence": 0.83 } },
   "relationships": { "src/App.tsx": { "internal": ["..."], "external": ["react"] } }
 }
 ```
@@ -143,7 +144,7 @@ claude mcp add ziplex -- python src/mcp_server.py      # register with Claude Co
 | Tool | What it does |
 |---|---|
 | `get_overview(aif_path)` | Project guide, coding rules, token stats — call this first |
-| `list_files(aif_path)` | Every file mapped to its one-line summary |
+| `list_files(aif_path)` | Every file mapped to its summary + confidence score |
 | `get_dependents(aif_path, file)` | Files that directly depend on `file` |
 | `get_blast_radius(aif_path, file)` | Every file transitively affected by a change to `file` |
 | `get_detail(aif_path, file, start_line?, end_line?)` | A file's compressed source, in full or by line range |
