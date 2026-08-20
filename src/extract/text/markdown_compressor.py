@@ -16,6 +16,21 @@ _TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _HEADING_RE = re.compile(r"^\s*#{1,6}\s")
 
+# 코드블록 언어 태그(```python 등) -> extract/code가 아는 확장자.
+# languages.py의 LANGUAGE_CONFIGS 키(.py/.java/.ts/.js)에 맞춰뒀다 — 거기 언어가
+# 늘어나면 여기도 별칭을 추가해야 그 언어 코드블록이 구조 압축의 혜택을 받는다.
+_FENCE_LANG_TO_EXT = {
+    "python": ".py",
+    "py": ".py",
+    "java": ".java",
+    "typescript": ".ts",
+    "ts": ".ts",
+    "javascript": ".js",
+    "js": ".js",
+    "jsx": ".js",
+    "tsx": ".ts",
+}
+
 
 def compress_markdown(text: str) -> str:
     """마크다운을 구조(헤딩)는 유지하고 반복/장문 콘텐츠만 축약해서 돌려준다.
@@ -24,8 +39,11 @@ def compress_markdown(text: str) -> str:
     라인 단위 마크다운에 적용한다:
     - 헤딩(#...)과 빈 줄은 그대로 유지 (문서 구조 자체이므로)
     - MAX_LIST_ITEMS를 넘는 연속 리스트 항목은 앞쪽만 남기고 마커로 대체
-    - MAX_CODEBLOCK_LINES를 넘는 코드 블록 본문은 앞쪽만 남기고 마커로 대체
-      (여는/닫는 펜스는 항상 유지)
+    - 코드 블록: 펜스에 언어 태그가 있고 extract/code가 아는 언어면(.py/.java/.ts/.js)
+      compress_code()로 함수 시그니처만 남기고 body를 지우는 "진짜" 구조 압축을
+      먼저 적용한다. 그 결과가 여전히 MAX_CODEBLOCK_LINES를 넘으면(함수가 없는
+      평범한 스크립트 등) 앞쪽만 남기고 마커로 자른다. 언어 미지정/미지원이면
+      곧바로 줄 수 기준으로만 자른다. 여는/닫는 펜스는 항상 유지.
     - MAX_TABLE_ROWS를 넘는 표 데이터 행은 앞쪽만 남기고 마커로 대체
       (헤더 행 + 구분선은 항상 유지)
     - MAX_PARAGRAPH_LEN을 넘는 일반 문단은 잘라내고 마커를 붙임
@@ -68,6 +86,7 @@ def compress_markdown(text: str) -> str:
 def _compress_codeblock(lines: list[str], i: int, result: list[str]) -> int:
     fence_line = lines[i]
     fence = _FENCE_RE.match(fence_line).group(1)
+    lang = fence_line.strip().removeprefix(fence).strip().lower()
     result.append(fence_line)
     i += 1
 
@@ -76,6 +95,8 @@ def _compress_codeblock(lines: list[str], i: int, result: list[str]) -> int:
     while i < n and not lines[i].strip().startswith(fence):
         i += 1
     body = lines[body_start:i]
+
+    body = _compress_codeblock_body(body, lang)
 
     if len(body) > MAX_CODEBLOCK_LINES:
         result.extend(body[:MAX_CODEBLOCK_LINES])
@@ -89,6 +110,21 @@ def _compress_codeblock(lines: list[str], i: int, result: list[str]) -> int:
         i += 1
 
     return i
+
+
+def _compress_codeblock_body(body: list[str], lang: str) -> list[str]:
+    ext = _FENCE_LANG_TO_EXT.get(lang)
+    if not ext:
+        return body
+
+    # 지연 import: 순환 참조 방지 이유는 compressor.py의 compress_file() 쪽
+    # 주석 참고. extract.code.compressor -> extract.text.registry ->
+    # markdown_compressor -> extract.code.compressor로 이어지는 고리를
+    # 함수 안 import로 끊는다.
+    from extract.code.compressor import compress_code
+
+    compressed = compress_code("\n".join(body), ext)
+    return body if compressed is None else compressed.splitlines()
 
 
 def _compress_list(lines: list[str], i: int, result: list[str]) -> int:
