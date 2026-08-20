@@ -10,17 +10,6 @@ Ziplex walks a project, compresses and structures it with Tree-sitter, summarize
 
 ---
 
-## Why
-
-Feeding an AI a whole codebase doesn't scale — and even when it fits, more tokens isn't the same as better context. Ziplex exists to fix four specific failure modes:
-
-| Problem | Cause | How Ziplex addresses it |
-|---|---|---|
-| **Context overflow** | Raw project exceeds the model's token limit | Tree-sitter strips function bodies, `tiktoken` measures the result across models |
-| **Lost in the middle** | Long, flat context buries relevant content | Structured, per-file JSON instead of a wall of text |
-| **Attention dilution** | Excess tokens drown out what actually matters | Every file is reduced to a one-line summary by default |
-| **Semantic gap** | Flat file dumps don't show how files relate | Explicit dependency graph (`relationships`), built from real imports and human review |
-
 ## How it works
 
 ```
