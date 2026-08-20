@@ -57,7 +57,7 @@ def collect_files(root_path: str) -> list[str]:
             ]
         ignore_patterns.extend(gitignore_lines)
 
-    spec = pathspec.PathSpec.from_lines("gitwildmatch", ignore_patterns)
+    spec = pathspec.PathSpec.from_lines("gitignore", ignore_patterns)
 
     collected = []
     for dirpath, dirnames, filenames in os.walk(root):
