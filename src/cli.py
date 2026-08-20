@@ -47,7 +47,7 @@ def main():
 
     p = sub.add_parser("pack", help="프로젝트 패킹")
     p.add_argument("path", help="프로젝트 폴더 경로")
-    p.add_argument("--output", "-o", default="aif.json", help="출력 파일 경로")
+    p.add_argument("--output", "-o", default=None, help="출력 파일 경로 (기본값: result/<프로젝트 폴더명>.json)")
     p.add_argument("--auto", action="store_true", help="파일 자동 선택")
 
     tr = sub.add_parser("tree", help="의존성 트리 출력")
