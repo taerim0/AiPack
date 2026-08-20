@@ -33,7 +33,7 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 - **Multi-language code compression** — Python, Java, TypeScript, and JavaScript today, via a per-language config table (`LanguageConfig`) so adding a new grammar is a single entry, not a rewrite.
 - **Text-aware compression beyond code** — dedicated compressors for JSON and Markdown (including embedded code fences) and plain text, using the same body-preserving philosophy as the code compressor.
 - **Security scanning built in** — `secretlint` first, regex fallback second; sensitive files never make it past collection.
-- **Human-in-the-loop correction** — every LLM output (summaries, rules, project guide, dependency tree) is reviewable and editable before anything is saved.
+- **Human-in-the-loop correction, opt-in** — every LLM output (summaries, rules, project guide, dependency tree) is reviewable and editable before anything is saved, or skippable entirely with `--auto-correct`. File selection (`--auto`) and correction (`--auto-correct`) are independent flags, so `pack` can run fully headless for CI or scripted use.
 - **Honest token accounting** — `tiktoken`-based before/after comparison across GPT-4o, GPT-3.5, and GPT-4 encodings, measured against what actually ships in `aif.json`, not just the raw compression ratio.
 - **Lean output, detail on request** — `aif.json` stays small (summaries + relationships); the full compressed body per file lives in `detail.json`, ready to be fetched on demand once an MCP layer exists.
 - **Resilient to LLM flakiness** — retries with backoff on rate limits, and a checkpoint system that lets a failed run resume later instead of restarting from scratch.
@@ -56,6 +56,13 @@ python src/cli.py pack ./your-project/
 # Skip interactive file selection, include everything safe
 python src/cli.py pack ./your-project/ --auto
 
+# Skip interactive correction, auto-accept whatever the LLM produced
+python src/cli.py pack ./your-project/ --auto-correct
+
+# Fully non-interactive (CI, scripted runs) -- file selection and correction
+# are independent flags, so any combination of the two works
+python src/cli.py pack ./your-project/ --auto --auto-correct
+
 # Custom output path (writes out.json + out.detail.json)
 python src/cli.py pack ./your-project/ -o output/out.json
 ```
@@ -74,6 +81,15 @@ python src/cli.py pack ./your-project/ -o output/out.json
 | `signatures \| dependencies \| api \| compress \| debug <file>` | Run one extraction step on a single file |
 
 </details>
+
+## Testing
+
+```bash
+pip install -r requirement-dev.txt   # adds pytest on top of requirement.txt
+pytest
+```
+
+Covers the deterministic core — compressors, the Tree-sitter extractor, the collector's ignore/binary-file filtering, the dependency-graph operations (`build_tree`/`has_cycle`/`move_file`), and the pure `aif`-editing API — without touching the network or needing `GEMINI_API_KEY`.
 
 ## Output format
 
