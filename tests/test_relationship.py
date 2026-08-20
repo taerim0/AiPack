@@ -1,6 +1,9 @@
 import pytest
 
-from file.relationship import build_tree, has_cycle, move_file, build_stem_map, CycleError
+from file.relationship import (
+    build_tree, has_cycle, move_file, build_stem_map, CycleError,
+    get_dependents, get_blast_radius,
+)
 
 
 def test_build_tree_splits_internal_and_external():
@@ -75,3 +78,53 @@ def test_move_file_raises_on_unknown_or_self():
 
     with pytest.raises(ValueError):
         move_file(files, "missing.py", "b.py")
+
+
+def test_get_dependents_finds_direct_dependents_only():
+    # b and c both depend on a; c also depends on b
+    relationships = {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": ["a.py"], "external": []},
+        "c.py": {"internal": ["a.py", "b.py"], "external": []},
+    }
+
+    assert get_dependents(relationships, "a.py") == ["b.py", "c.py"]
+    assert get_dependents(relationships, "b.py") == ["c.py"]
+    assert get_dependents(relationships, "c.py") == []
+
+
+def test_get_blast_radius_is_transitive():
+    # c -> b -> a: changing a transitively affects both b and c
+    relationships = {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": ["a.py"], "external": []},
+        "c.py": {"internal": ["b.py"], "external": []},
+    }
+
+    assert get_blast_radius(relationships, "a.py") == ["b.py", "c.py"]
+    assert get_blast_radius(relationships, "b.py") == ["c.py"]
+    assert get_blast_radius(relationships, "c.py") == []
+
+
+def test_get_blast_radius_handles_a_diamond_without_duplicates():
+    # b and c both depend on a; d depends on both b and c
+    relationships = {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": ["a.py"], "external": []},
+        "c.py": {"internal": ["a.py"], "external": []},
+        "d.py": {"internal": ["b.py", "c.py"], "external": []},
+    }
+
+    assert get_blast_radius(relationships, "a.py") == ["b.py", "c.py", "d.py"]
+
+
+def test_get_blast_radius_includes_self_when_part_of_a_cycle():
+    # a <-> b: a mutual import. A change to a can transitively come back
+    # around through b, so a legitimately appears in its own blast radius --
+    # this isn't a bug, see get_blast_radius()'s docstring.
+    relationships = {
+        "a.py": {"internal": ["b.py"], "external": []},
+        "b.py": {"internal": ["a.py"], "external": []},
+    }
+
+    assert get_blast_radius(relationships, "a.py") == ["a.py", "b.py"]

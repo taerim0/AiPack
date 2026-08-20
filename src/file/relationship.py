@@ -110,6 +110,45 @@ def build_tree(files: dict) -> dict:
     return tree
 
 
+def get_dependents(relationships: dict, file: str) -> list[str]:
+    """Every file whose `internal` list includes `file` -- i.e. who would be
+    directly affected by a change to `file`. The inverse of
+    relationships[file]["internal"] (what `file` depends on): this answers
+    "who depends on me," not "what do I depend on."
+
+    Takes `relationships` (build_tree()'s output, or aif.json's
+    `relationships` field directly), not `files` -- there's no dependency
+    resolution left to do here, just a graph traversal over already-resolved
+    edges.
+    """
+    return sorted(
+        name for name, deps in relationships.items()
+        if file in deps.get("internal", [])
+    )
+
+
+def get_blast_radius(relationships: dict, file: str) -> list[str]:
+    """Transitive closure of get_dependents(): every file that would be
+    affected, directly or indirectly, by a change to `file`.
+
+    Can include `file` itself if it participates in a dependency cycle (e.g.
+    a <-> b: a change to `a` can transitively come back around through `b`).
+    That's correct, not a bug -- verified against a real project where two
+    Java classes import each other (a mod's main class and one of its
+    registries, a common pattern) and both showed up in each other's blast
+    radius, themselves included.
+    """
+    visited: set[str] = set()
+    queue = [file]
+    while queue:
+        current = queue.pop()
+        for dependent in get_dependents(relationships, current):
+            if dependent not in visited:
+                visited.add(dependent)
+                queue.append(dependent)
+    return sorted(visited)
+
+
 def print_tree(tree: dict):
     print("\n📦 Project Dependency Tree\n")
 
