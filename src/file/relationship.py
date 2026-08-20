@@ -22,6 +22,73 @@ def resolve_dependency(dep: str, stem_map: dict) -> str | None:
     return stem_map.get(dep.split(".")[-1])
 
 
+class CycleError(Exception):
+    """Raised by move_file() when reparenting a file would create a dependency cycle."""
+
+    def __init__(self, from_file: str, to_file: str):
+        self.from_file = from_file
+        self.to_file = to_file
+        super().__init__(f"moving {from_file!r} under {to_file!r} would create a cycle")
+
+
+def has_cycle(files: dict, stem_map: dict, from_file: str, to_file: str) -> bool:
+    """Checks whether from_file already (transitively) depends on to_file.
+
+    move_file() is about to add the edge "to_file depends on from_file" (a
+    dependency entry is a "child" in the tree: see build_tree()/print_tree()).
+    That edge closes a cycle exactly when from_file can already reach to_file
+    by walking its own existing dependency chain (from_file -> ... -> to_file)
+    -- the new edge would then complete the loop to_file -> from_file -> ...
+    -> to_file. So this walks from from_file, not to_file.
+    """
+    visited = set()
+    queue = [from_file]
+    while queue:
+        current = queue.pop()
+        if current == to_file:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        for dep in files.get(current, {}).get("dependencies", []):
+            matched = resolve_dependency(dep, stem_map)
+            if matched:
+                queue.append(matched)
+    return False
+
+
+def move_file(files: dict, file_name: str, new_parent: str) -> dict:
+    """Reparents file_name under new_parent, removing it from wherever it
+    currently sits in the dependency tree first -- regardless of whether its
+    old entry there was a raw import path or an already-pinned file name from
+    an earlier move.
+
+    Raises ValueError if file_name/new_parent aren't both in `files` (or are
+    the same file), and CycleError if the move would create a cycle. Mutates
+    and returns `files`.
+    """
+    if file_name not in files:
+        raise ValueError(f"unknown file: {file_name}")
+    if new_parent not in files:
+        raise ValueError(f"unknown file: {new_parent}")
+    if file_name == new_parent:
+        raise ValueError("a file can't be its own parent")
+
+    stem_map = build_stem_map(files.keys())
+    if has_cycle(files, stem_map, file_name, new_parent):
+        raise CycleError(file_name, new_parent)
+
+    # remove file_name from wherever it's currently listed as a dependency
+    for data in files.values():
+        deps = data.get("dependencies", [])
+        data["dependencies"] = [d for d in deps if resolve_dependency(d, stem_map) != file_name]
+
+    files.setdefault(new_parent, {}).setdefault("dependencies", [])
+    files[new_parent]["dependencies"].append(file_name)
+
+    return files
+
+
 def build_tree(files: dict) -> dict:
     stem_map = build_stem_map(files.keys())
     tree = {}

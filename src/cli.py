@@ -11,6 +11,7 @@ from file.selector import select_files
 from llm import analyze_file_summary, analyze_rules, analyze_prompt
 from packager import pack, save_aif
 from corrector import correct_aif
+from edits import finalize_aif
 from file.relationship import build_tree, print_tree as print_dependency_tree
 
 
@@ -48,7 +49,8 @@ def main():
     p = sub.add_parser("pack", help="프로젝트 패킹")
     p.add_argument("path", help="프로젝트 폴더 경로")
     p.add_argument("--output", "-o", default=None, help="출력 파일 경로 (기본값: result/<프로젝트 폴더명>.json)")
-    p.add_argument("--auto", action="store_true", help="파일 자동 선택")
+    p.add_argument("--auto", action="store_true", help="파일 자동 선택 (전체 안전 파일 포함)")
+    p.add_argument("--auto-correct", action="store_true", help="LLM 결과 자동 승인 (대화형 보정 건너뜀)")
 
     tr = sub.add_parser("tree", help="의존성 트리 출력")
     tr.add_argument("path", help="프로젝트 폴더 경로")
@@ -186,7 +188,10 @@ def main():
     elif args.command == "pack":
         aif = pack(args.path, auto=args.auto)
         if aif:
-            aif = correct_aif(aif)  # correct + build relationships
+            if args.auto_correct:
+                aif = finalize_aif(aif)  # skip interactive review, still build relationships
+            else:
+                aif = correct_aif(aif)  # interactive correct + build relationships
             save_aif(aif, args.output)
 
             print("\n" + "=" * 50)
