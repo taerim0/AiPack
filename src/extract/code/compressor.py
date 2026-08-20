@@ -1,5 +1,6 @@
 from extract.code.languages import get_language_config
 from extract.code.parser import get_parser
+from extract.text.registry import get_text_compressor
 from file.textutil import read_text
 from pathlib import Path
 
@@ -13,9 +14,10 @@ def compress_file(file_path: str) -> str:
 
     parser = get_parser(file_path)
 
-    # 지원 안 하는 언어면 그대로 반환
+    # Tree-sitter 미지원 확장자 -> 텍스트 전용 압축기가 있으면 그걸로, 없으면 그대로 반환
     if not parser:
-        return code
+        text_compressor = get_text_compressor(Path(file_path).suffix)
+        return text_compressor(code) if text_compressor else code
 
     config = get_language_config(Path(file_path).suffix)
     function_types = config.function_types if config else []
