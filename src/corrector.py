@@ -161,6 +161,21 @@ def correct_aif(aif: dict) -> dict:
     for file_name in needs_review:
         data = aif["files"][file_name]
         print(f"\n  ⚠️  {file_name} (신뢰도 {data.get('confidence', 1.0)}): {data['summary']}")
+        # Show what actually triggered the low score -- confidence.py flagged
+        # this because the summary's wording doesn't overlap with these, so
+        # printing them lets a human judge the mismatch right here instead of
+        # having to go open the file themselves (the flagged subset always
+        # has signatures: estimate_confidence() returns 1.0, never below
+        # REVIEW_THRESHOLD, for a file with none -- text-only files never
+        # reach this branch).
+        signatures = data.get("signatures", [])
+        if signatures:
+            print("     실제 시그니처:")
+            shown = signatures[:10]
+            for sig in shown:
+                print(f"       - {sig}")
+            if len(signatures) > len(shown):
+                print(f"       ... 외 {len(signatures) - len(shown)}개")
         new_summary = input("  수정 (엔터=유지): ").strip()
         if new_summary:
             set_file_summary(aif, file_name, new_summary)
