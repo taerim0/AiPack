@@ -5,13 +5,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from file.collector import collect_files
 from file.scanner import scan_files
 from file.selector import select_files
-from file.textutil import read_text
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api
 from extract.code.compressor import compress_file
-from tokenizer import analyze_tokens_with_compression
+from tokenizer import analyze_tokens_with_payload
 from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analyze_prompt
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
+RESULT_DIR = Path(__file__).parent.parent / "result"
 
 # Concurrency used when requesting per-file summaries in parallel.
 # Kept conservative with LLM API rate limits in mind — adjust if needed.
@@ -88,8 +88,11 @@ def _request_summary(file_path: str, data: dict) -> str:
             data["dependencies"]
         )
     else:
-        content = read_text(file_path) or ""
-        response = analyze_text_summary(file_path, content)
+        # Use the already-computed compressed text, not a fresh raw read: it's
+        # cheaper (no second read, no separate truncation logic) and keeps the
+        # summary grounded in what actually ships in aif.json rather than text
+        # that may get stripped out of `compressed`.
+        response = analyze_text_summary(file_path, data.get("compressed", ""))
 
     try:
         return json.loads(response).get("summary", "")
@@ -264,8 +267,14 @@ def pack(root_path: str, auto: bool = False) -> dict:
         print("  ✍️  AI 가이드 (체크포인트에서 복원)")
 
     # 6. Token counting
+    # Compares raw project text against the actual per-file aif.json payload
+    # (just the summary -- signatures/dependencies/api/compressed are either
+    # working state pruned later in correct_aif(), or split out to a sibling
+    # detail.json by save_aif() and not part of what's loaded by default).
+    # files_data is fully populated with summaries by now, so this reflects
+    # the real savings an AI gets from reading aif.json.
     print("\n📊 토큰 분석 중...")
-    token_results, _ = analyze_tokens_with_compression(selected)
+    token_results, _ = analyze_tokens_with_payload(selected, files_data)
 
     # 7. Assemble AIF.json
     aif = {
@@ -300,7 +309,41 @@ def pack(root_path: str, auto: bool = False) -> dict:
     return aif
 
 
-def save_aif(aif: dict, output_path: str) -> None:
+def save_aif(aif: dict, output_path: str | None = None) -> None:
+    """Writes the AIF result to output_path, or to result/<project name>.json if
+    output_path isn't given — mirroring CHECKPOINT_DIR, anchored to the repo root
+    rather than the caller's cwd, so `pack` writes to the same place regardless of
+    where it's invoked from.
+
+    Splits `compressed` out of each file entry into a sibling "<name>.detail.json"
+    keyed the same way as `files`. aif.json (summary + relationships) is what an
+    AI reads by default -- for a file with no compressed body to strip (README,
+    config, lang files, ...) `compressed` is close to the raw original, so
+    shipping it unconditionally on every file undoes the token savings for
+    exactly the files that benefit least from it. Actually fetching detail.json
+    only for files an AI decides it needs (e.g. via an MCP tool) is future work;
+    for now this just keeps that data on disk instead of discarding it.
+    """
+    if output_path is None:
+        RESULT_DIR.mkdir(exist_ok=True)
+        output_path = RESULT_DIR / f"{aif['project']['name']}.json"
+    else:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lean_files = {}
+    detail = {}
+    for name, data in aif["files"].items():
+        lean_files[name] = {k: v for k, v in data.items() if k != "compressed"}
+        detail[name] = {"compressed": data.get("compressed", "")}
+
+    lean_aif = {**aif, "files": lean_files}
+
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(aif, f, ensure_ascii=False, indent=2)
+        json.dump(lean_aif, f, ensure_ascii=False, indent=2)
     print(f"\n✅ AIF.json 저장됨: {output_path}")
+
+    detail_path = output_path.with_name(f"{output_path.stem}.detail.json")
+    with open(detail_path, "w", encoding="utf-8") as f:
+        json.dump(detail, f, ensure_ascii=False, indent=2)
+    print(f"📦 상세 정보(compressed) 저장됨: {detail_path}")

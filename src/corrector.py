@@ -176,5 +176,17 @@ def correct_aif(aif: dict) -> dict:
     # build relationships after correction is done
     aif["relationships"] = build_tree(aif["files"])
 
+    # signatures/dependencies/api were needed as working state up to this point
+    # (dependencies drove correct_relationships()/build_tree() above; signatures
+    # fed analyze_rules() back in packager.py) but are redundant in the shipped
+    # output now: dependencies is fully represented by `relationships`
+    # (deduped, split into internal/external), and signatures/api duplicate
+    # what's already visible inline in `compressed` (only function bodies are
+    # stripped -- signatures, imports, and decorators stay in place).
+    for data in aif["files"].values():
+        data.pop("signatures", None)
+        data.pop("dependencies", None)
+        data.pop("api", None)
+
     print("\n✅ 보정 완료")
     return aif
