@@ -42,6 +42,7 @@ def test_check_freshness_reports_no_drift_when_nothing_changed(tmp_path):
     assert report.changed == []
     assert report.added == []
     assert report.removed == []
+    assert report.unchanged == ["a.py"]
 
 
 def test_check_freshness_detects_a_changed_file(tmp_path):
@@ -57,6 +58,7 @@ def test_check_freshness_detects_a_changed_file(tmp_path):
     assert report.changed == ["a.py"]
     assert report.added == []
     assert report.removed == []
+    assert report.unchanged == []
 
 
 def test_check_freshness_detects_added_and_removed_files(tmp_path):
@@ -75,3 +77,4 @@ def test_check_freshness_detects_added_and_removed_files(tmp_path):
     assert report.changed == []
     assert report.added == ["c.py"]
     assert report.removed == ["b.py"]
+    assert report.unchanged == ["a.py"]

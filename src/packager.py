@@ -10,7 +10,7 @@ from extract.code.extractor import extract_signatures, extract_dependencies, ext
 from extract.code.compressor import compress_file
 from tokenizer import analyze_tokens_with_payload
 from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analyze_prompt
-from freshness import build_manifest
+from freshness import build_manifest, check_freshness
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
 RESULT_DIR = Path(__file__).parent.parent / "result"
@@ -96,6 +96,39 @@ def _resume_checkpoint_choice(interactive: bool) -> bool:
     return choice != "2"
 
 
+def _load_previous_summaries(root_path: str, selected: list[str]) -> dict[str, str]:
+    """{relative key: summary} for files in `selected` whose content hash
+    matches the last successful pack's manifest, at the conventional
+    RESULT_DIR path save_aif() writes to by default (<name>.json +
+    <name>.cache.json). This is what pack() checks before spending an LLM
+    call on a file's summary again.
+
+    Returns {} on any cache miss -- no previous pack there, or its output
+    files are missing/unreadable/corrupt -- rather than raising. A miss just
+    means every file gets summarized fresh, same as before this existed.
+    """
+    name = Path(root_path).name
+    aif_path = RESULT_DIR / f"{name}.json"
+    cache_path = RESULT_DIR / f"{name}.cache.json"
+    if not aif_path.exists() or not cache_path.exists():
+        return {}
+
+    try:
+        with open(aif_path, "r", encoding="utf-8") as f:
+            previous_files = json.load(f).get("files", {})
+        with open(cache_path, "r", encoding="utf-8") as f:
+            previous_manifest = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    report = check_freshness(selected, root_path, previous_manifest)
+    return {
+        rel: previous_files[rel]["summary"]
+        for rel in report.unchanged
+        if rel in previous_files and previous_files[rel].get("summary")
+    }
+
+
 def _request_summary(file_path: str, data: dict) -> str:
     """Tries once to get one file's summary; returns an empty string on failure.
 
@@ -132,7 +165,7 @@ def _current_aif_snapshot(root: Path, files_data: dict, rules: list = None, prom
     }
 
 
-def pack(root_path: str, auto: bool = False, interactive: bool = True) -> dict:
+def pack(root_path: str, auto: bool = False, interactive: bool = True, use_cache: bool = True) -> dict:
     """auto controls file selection (skip the interactive picker, include all
     safe files); interactive controls whether a failing LLM call can prompt
     for input at all. The two are independent: `--auto` alone still lets
@@ -141,6 +174,17 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True) -> dict:
     file selection left interactive. `cli.py`'s `--auto-correct` sets both
     this and whether corrector.py's interactive review runs afterward, since
     both boil down to the same question: is there a terminal to prompt?
+
+    use_cache controls incremental reuse (staleness stage 2): when a
+    previous successful pack is found at the conventional RESULT_DIR path
+    for this project, any file whose content hash still matches gets its
+    summary reused instead of spending another LLM call on it. Only summary
+    is reused -- signatures/dependencies/api/compressed are always
+    freshly extracted, so a human's prior manual reparenting
+    (corrector.py's move_file()) never silently gets skipped along with an
+    unchanged file's dependency data; a fresh pack always rebuilds
+    `relationships` from scratch regardless of this flag, same as before
+    incremental reuse existed.
     """
     root = Path(root_path)
 
@@ -179,6 +223,12 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True) -> dict:
         print("선택된 파일 없음.")
         return {}
 
+    # incremental reuse (staleness stage 2): {relative key: summary} for
+    # files whose content hasn't changed since the last successful pack
+    previous_summaries = _load_previous_summaries(root_path, selected) if use_cache else {}
+    if previous_summaries:
+        print(f"  ♻️  이전 pack에서 변경 없는 파일 {len(previous_summaries)}개 발견 — 요약 재사용")
+
     # 4. Tree-sitter analysis
     print("\n🔍 코드 구조 분석 중...")
     files_data = {}
@@ -199,19 +249,23 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True) -> dict:
         deps = extract_dependencies(file_path)
         apis = extract_api(file_path)
         compressed = compress_file(file_path)
+        reused_summary = previous_summaries.get(name, "")
 
         files_data[file_path] = {
             "signatures": sigs,
             "dependencies": deps,
             "api": apis,
             "compressed": compressed,
-            "summary": ""
+            "summary": reused_summary
         }
 
         if sigs or deps:
             signatures_map[file_path] = sigs
 
-        print(f"  ✅ {name}")
+        if reused_summary:
+            print(f"  ♻️  {name} (변경 없음, 이전 요약 재사용)")
+        else:
+            print(f"  ✅ {name}")
 
     # 5. LLM analysis
     # Each file's summary is human-reviewed/corrected in correct_aif() later, so

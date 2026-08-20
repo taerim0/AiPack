@@ -71,3 +71,84 @@ def test_save_aif_writes_a_sibling_cache_json_from_the_manifest(tmp_path, monkey
     # saved aif.json itself
     saved_aif = json.loads(output_path.read_text(encoding="utf-8"))
     assert "_manifest" not in saved_aif
+
+
+class _CountingMockProvider(llm.MockProvider):
+    """Same fixed responses as MockProvider, but counts calls -- MockProvider
+    alone can't tell a caching test whether a summary was actually reused or
+    just regenerated identically, since it always returns the same text
+    either way. Call count is the only reliable signal.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        self.calls += 1
+        return super().generate(prompt, retry)
+
+
+def test_pack_reuses_summaries_for_unchanged_files_on_a_second_run(tmp_path, monkeypatch):
+    provider = _CountingMockProvider()
+    monkeypatch.setattr(llm, "_provider", provider)
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "README.md", "# Sample\n\nA sample project.\n")
+
+    # first pack: main.py + README.md need summarizing (2 calls), plus rules
+    # and the AI guide (1 call each) -- everything is new
+    aif1 = packager.pack(str(project), auto=True, interactive=False)
+    packager.save_aif(aif1)  # default path -> tmp_path/result/project.json, via the monkeypatched RESULT_DIR
+    first_run_calls = provider.calls
+    assert first_run_calls == 4
+
+    # second pack, nothing on disk changed: both summaries should be reused
+    # from result/project.json -- only rules + prompt regenerate (2 calls),
+    # since those aren't cached (see pack()'s use_cache docstring)
+    provider.calls = 0
+    aif2 = packager.pack(str(project), auto=True, interactive=False)
+
+    assert provider.calls == 2
+    assert aif2["files"]["main.py"]["summary"] == aif1["files"]["main.py"]["summary"]
+    assert aif2["files"]["README.md"]["summary"] == aif1["files"]["README.md"]["summary"]
+
+
+def test_pack_only_resummarizes_a_changed_file(tmp_path, monkeypatch):
+    provider = _CountingMockProvider()
+    monkeypatch.setattr(llm, "_provider", provider)
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "README.md", "# Sample\n")
+
+    packager.save_aif(packager.pack(str(project), auto=True, interactive=False))
+
+    _write(project / "main.py", "def add(a, b):\n    return a + b + 1\n")  # only this one changes
+    provider.calls = 0
+    packager.pack(str(project), auto=True, interactive=False)
+
+    # 1 summary (main.py) + rules + prompt = 3; README.md's summary is reused
+    assert provider.calls == 3
+
+
+def test_pack_use_cache_false_resummarizes_everything(tmp_path, monkeypatch):
+    provider = _CountingMockProvider()
+    monkeypatch.setattr(llm, "_provider", provider)
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    packager.save_aif(packager.pack(str(project), auto=True, interactive=False))
+
+    provider.calls = 0
+    packager.pack(str(project), auto=True, interactive=False, use_cache=False)
+
+    # 1 summary + rules + prompt = 3, same as an unseen project -- nothing reused
+    assert provider.calls == 3

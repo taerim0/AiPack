@@ -124,9 +124,9 @@ def check_freshness(project_path: str, aif_path: str) -> dict:
     get_overview/list_files/get_dependents/get_blast_radius/get_detail on a
     project you suspect has changed since it was last packed. (search_project
     never needs this -- it always reads files live, never aif.json/
-    detail.json.) Reports which files changed, were added, or were removed
-    since the pack aif_path came from; doesn't fix anything itself -- a
-    stale result still means re-running `pack`.
+    detail.json.) Reports which files changed, were added, were removed, or
+    are unchanged since the pack aif_path came from; doesn't fix anything
+    itself -- a stale result still means re-running `pack`.
     """
     manifest = _load_json(str(_cache_path(aif_path)))
     files = collect_files(project_path)
@@ -137,6 +137,7 @@ def check_freshness(project_path: str, aif_path: str) -> dict:
         "changed": report.changed,
         "added": report.added,
         "removed": report.removed,
+        "unchanged": report.unchanged,
     }
 
 

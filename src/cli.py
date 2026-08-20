@@ -53,6 +53,7 @@ def main():
     p.add_argument("--output", "-o", default=None, help="출력 파일 경로 (기본값: result/<프로젝트 폴더명>.json)")
     p.add_argument("--auto", action="store_true", help="파일 자동 선택 (전체 안전 파일 포함)")
     p.add_argument("--auto-correct", action="store_true", help="LLM 결과 자동 승인 (대화형 보정 건너뜀)")
+    p.add_argument("--no-cache", action="store_true", help="변경 없는 파일도 요약을 다시 생성 (이전 pack 재사용 끄기)")
 
     tr = sub.add_parser("tree", help="의존성 트리 출력")
     tr.add_argument("path", help="프로젝트 폴더 경로")
@@ -205,7 +206,7 @@ def main():
     elif args.command == "pack":
         # --auto-correct also means no terminal to prompt if an LLM call
         # keeps failing inside pack() itself (see handle_llm_failure).
-        aif = pack(args.path, auto=args.auto, interactive=not args.auto_correct)
+        aif = pack(args.path, auto=args.auto, interactive=not args.auto_correct, use_cache=not args.no_cache)
         if aif:
             if args.auto_correct:
                 aif = finalize_aif(aif)  # skip interactive review, still build relationships

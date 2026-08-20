@@ -37,6 +37,7 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 - **Honest token accounting** — `tiktoken`-based before/after comparison across GPT-4o, GPT-3.5, and GPT-4 encodings, measured against what actually ships in `aif.json`, not just the raw compression ratio.
 - **Lean output, detail on request** — `aif.json` stays small (summaries + relationships); the full compressed body per file lives in `detail.json`, fetched on demand by the MCP server's `get_detail` tool (see below) rather than shipped on every file up front.
 - **Resilient to LLM flakiness** — retries with backoff on rate limits, and a checkpoint system that lets a failed run resume later instead of restarting from scratch.
+- **Incremental re-pack** — a content-hash manifest (`<name>.cache.json`) lets a later `pack` on the same project reuse an unchanged file's summary instead of paying for another LLM call, so keeping a project's `aif.json` current stays cheap enough to actually do routinely. Detecting *whether* it's gone stale is also exposed standalone via `check_freshness`, without triggering a re-pack (see MCP server below).
 - **Provider-agnostic LLM layer** — swapping Gemini for another model is implementing one `generate()` method and registering it, not touching the rest of the pipeline.
 - **Not just for git repos** — works on any collection of local files with relationships across extensions: game mods, asset projects, whatever isn't a typical software repo.
 
@@ -65,7 +66,12 @@ python src/cli.py pack ./your-project/ --auto --auto-correct
 
 # Custom output path (writes out.json + out.detail.json)
 python src/cli.py pack ./your-project/ -o output/out.json
+
+# Force-resummarize every file, ignoring any previous pack found on disk
+python src/cli.py pack ./your-project/ --no-cache
 ```
+
+Re-running `pack` on a project you've packed before only re-summarizes files that actually changed (by content hash) — everything else reuses its previous summary instead of another LLM call.
 
 <details>
 <summary>Every command</summary>

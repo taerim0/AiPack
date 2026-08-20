@@ -7,9 +7,10 @@ tool except search_project() (which always re-reads files live) trusts that
 snapshot as-is. This is the tool to check whether that trust is still
 warranted before relying on (or re-packing) a project.
 
-Stage 1 of two, per the ziplex-roadmap memory: this only detects drift.
-Stage 2 (not built yet) would use the same hash manifest to skip
-re-summarizing files that haven't changed on the next pack() run.
+This module only detects drift -- it doesn't refresh anything itself.
+packager.pack() is what actually uses check_freshness()'s `unchanged` list,
+to reuse a previous run's summary for any file whose content hash hasn't
+changed instead of paying for another LLM call.
 """
 
 import hashlib
@@ -49,6 +50,7 @@ class FreshnessReport:
     changed: list[str] = field(default_factory=list)
     added: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
 
     @property
     def is_stale(self) -> bool:
@@ -74,5 +76,9 @@ def check_freshness(file_paths: list[str], root: str, manifest: dict[str, str]) 
     )
     added = sorted(name for name in current if name not in manifest)
     removed = sorted(name for name in manifest if name not in current)
+    unchanged = sorted(
+        name for name, digest in current.items()
+        if name in manifest and manifest[name] == digest
+    )
 
-    return FreshnessReport(changed=changed, added=added, removed=removed)
+    return FreshnessReport(changed=changed, added=added, removed=removed, unchanged=unchanged)
