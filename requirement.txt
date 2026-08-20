@@ -6,3 +6,4 @@ tiktoken
 pathspec
 python-dotenv
 requests
+mcp
