@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import time
 from typing import Protocol
 
@@ -100,6 +102,13 @@ class MockProvider:
             return '{"relationships": {}}'
         if '"prompt"' in prompt:
             return '{"prompt": "Mock AI guide for local testing."}'
+        if '"summaries"' in prompt:
+            # analyze_batch_summaries() -- echo back every "File: <name>" line
+            # it wrote into the prompt, same fixed summary for each, so a
+            # batched pack() run gets one entry per file the same way a
+            # real batched Gemini response would.
+            names = re.findall(r"^File: (.+)$", prompt, re.MULTILINE)
+            return json.dumps({"summaries": {name: "Mock summary for local testing." for name in names}})
         # analyze_file_summary and analyze_text_summary both want this shape
         return '{"summary": "Mock summary for local testing."}'
 
@@ -149,6 +158,52 @@ Content:
 {content[:500]}
 
 {{"summary": "..."}}
+"""
+    return generate(prompt)
+
+
+def analyze_batch_summaries(items: list[dict]) -> str:
+    """Same one-line-per-file summary task as analyze_file_summary() /
+    analyze_text_summary(), but for several files in a single request.
+
+    Cuts the *request count* a first pack makes, roughly by len(items) --
+    which is what actually drives the 429/503 backoff above in practice
+    (hit repeatedly in this session on even a 12-file toy project), even
+    though total token volume sent to Gemini is about the same either way.
+
+    items: [{"file": name, "signatures": [...], "dependencies": [...],
+    "content": "..."}, ...]. Per item, signatures/dependencies are used when
+    either is non-empty (mirrors analyze_file_summary); otherwise content is
+    used, truncated the same 500 chars as analyze_text_summary(). `name`
+    should be a short, stable identifier (packager.py uses the file's
+    relative key, not its absolute path) -- it's both what's shown to the
+    model and the exact key the response is expected to echo back, so the
+    caller can match summaries to files by string equality. A model that
+    renames/drops a key just means that one item comes back unmatched; see
+    packager.py's per-file fallback for what happens then.
+    """
+    parts = []
+    for item in items:
+        if item.get("signatures") or item.get("dependencies"):
+            parts.append(
+                f"File: {item['file']}\n"
+                f"Function signatures: {item['signatures']}\n"
+                f"Dependencies: {item['dependencies']}"
+            )
+        else:
+            parts.append(
+                f"File: {item['file']}\n"
+                f"Content:\n{item.get('content', '')[:500]}"
+            )
+    joined = "\n\n".join(parts)
+
+    prompt = f"""
+Based on the file info below, summarize each file's role in one line.
+Respond with JSON only, nothing else.
+
+{joined}
+
+{{"summaries": {{"<file>": "...", "<file>": "..."}}}}
 """
     return generate(prompt)
 

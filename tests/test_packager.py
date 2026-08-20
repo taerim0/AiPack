@@ -6,6 +6,7 @@ unconditionally, crashing with EOFError under closed stdin (e.g. `pack
 """
 
 import builtins
+import json
 
 import packager
 
@@ -51,3 +52,43 @@ def test_resume_checkpoint_choice_interactive_respects_choice(monkeypatch):
 
     monkeypatch.setattr(builtins, "input", lambda *a, **k: "")
     assert packager._resume_checkpoint_choice(interactive=True) is True
+
+
+def test_chunked_splits_into_groups_of_size():
+    assert packager._chunked(["a", "b", "c", "d", "e"], 2) == [["a", "b"], ["c", "d"], ["e"]]
+
+
+def test_request_batch_summaries_uses_the_batch_response_when_complete(monkeypatch):
+    monkeypatch.setattr(
+        packager, "analyze_batch_summaries",
+        lambda items: json.dumps({"summaries": {"a.py": "does a", "b.py": "does b"}}),
+    )
+
+    def _unexpected_fallback(*a, **k):
+        raise AssertionError("_request_summary must not be called when the batch response is complete")
+
+    monkeypatch.setattr(packager, "_request_summary", _unexpected_fallback)
+
+    batch = [("a.py", {"signatures": [], "dependencies": []}), ("b.py", {"signatures": [], "dependencies": []})]
+    assert packager._request_batch_summaries(batch) == {"a.py": "does a", "b.py": "does b"}
+
+
+def test_request_batch_summaries_falls_back_per_file_on_a_missing_key(monkeypatch):
+    # the batch response only covers a.py -- b.py must fall back
+    # individually rather than the whole batch being lost
+    monkeypatch.setattr(
+        packager, "analyze_batch_summaries",
+        lambda items: json.dumps({"summaries": {"a.py": "does a"}}),
+    )
+    monkeypatch.setattr(packager, "_request_summary", lambda name, data: f"fallback for {name}")
+
+    batch = [("a.py", {"signatures": [], "dependencies": []}), ("b.py", {"signatures": [], "dependencies": []})]
+    assert packager._request_batch_summaries(batch) == {"a.py": "does a", "b.py": "fallback for b.py"}
+
+
+def test_request_batch_summaries_falls_back_entirely_on_a_garbled_response(monkeypatch):
+    monkeypatch.setattr(packager, "analyze_batch_summaries", lambda items: "not json")
+    monkeypatch.setattr(packager, "_request_summary", lambda name, data: f"fallback for {name}")
+
+    batch = [("a.py", {"signatures": [], "dependencies": []})]
+    assert packager._request_batch_summaries(batch) == {"a.py": "fallback for a.py"}

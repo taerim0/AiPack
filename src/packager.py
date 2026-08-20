@@ -9,7 +9,7 @@ from file.textutil import relative_key as _rel_key
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api
 from extract.code.compressor import compress_file
 from tokenizer import analyze_tokens_with_payload
-from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analyze_prompt
+from llm import analyze_file_summary, analyze_text_summary, analyze_batch_summaries, analyze_rules, analyze_prompt
 from freshness import build_manifest, check_freshness
 from confidence import estimate_confidence
 
@@ -19,6 +19,12 @@ RESULT_DIR = Path(__file__).parent.parent / "result"
 # Concurrency used when requesting per-file summaries in parallel.
 # Kept conservative with LLM API rate limits in mind — adjust if needed.
 MAX_WORKERS = 4
+
+# Files per batched summary request (see llm.analyze_batch_summaries). Trades
+# a somewhat larger prompt for far fewer requests -- directly eases the
+# rate-limit pressure that drives most first-pack retries, without changing
+# MAX_WORKERS' cross-batch parallelism.
+BATCH_SIZE = 8
 
 
 def save_checkpoint(root_path: str, data: dict) -> None:
@@ -155,6 +161,40 @@ def _request_summary(file_path: str, data: dict) -> str:
         return ""
 
 
+def _chunked(items: list, size: int) -> list[list]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _request_batch_summaries(batch: list[tuple[str, dict]]) -> dict[str, str]:
+    """batch: [(relative name, data), ...]. Tries one LLM call covering the
+    whole batch; any name the response doesn't cover (missing entirely, or
+    the model didn't echo the exact key) falls back to _request_summary()
+    individually -- so a partially wrong/incomplete batch response only
+    costs what it actually failed on, not the whole batch, and a fully
+    garbled response degrades to the old one-call-per-file behavior instead
+    of losing every file in it.
+    """
+    items = [
+        {
+            "file": name,
+            "signatures": data["signatures"],
+            "dependencies": data["dependencies"],
+            "content": data.get("compressed", ""),
+        }
+        for name, data in batch
+    ]
+    response = analyze_batch_summaries(items)
+    try:
+        summaries = json.loads(response).get("summaries", {})
+    except json.JSONDecodeError:
+        summaries = {}
+
+    result = {}
+    for name, data in batch:
+        result[name] = summaries.get(name) or _request_summary(name, data)
+    return result
+
+
 def _current_aif_snapshot(root: Path, files_data: dict, rules: list = None, prompt: str = "") -> dict:
     return {
         "project": {"name": root.name, "prompt": prompt},
@@ -279,17 +319,25 @@ def pack(root_path: str, auto: bool = False, interactive: bool = True, use_cache
     pending = {
         fp: data for fp, data in files_data.items() if not data.get("summary")
     }
+    # name_to_fp lets _request_batch_summaries() work with the same short,
+    # stable relative keys that show up in the LLM prompt/response, then map
+    # results back to the absolute paths files_data is keyed by.
+    name_to_fp = {_rel_key(fp, root): fp for fp in pending}
+    batches = [
+        [(name, pending[name_to_fp[name]]) for name in chunk]
+        for chunk in _chunked(list(name_to_fp.keys()), BATCH_SIZE)
+    ]
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {
-            executor.submit(_request_summary, fp, data): fp
-            for fp, data in pending.items()
+            executor.submit(_request_batch_summaries, batch): batch
+            for batch in batches
         }
         for future in as_completed(futures):
-            fp = futures[future]
-            summary = future.result() or "요약 생성 실패"
-            files_data[fp]["summary"] = summary
-            print(f"  ✅ {_rel_key(fp, root)}")
+            for name, summary in future.result().items():
+                fp = name_to_fp[name]
+                files_data[fp]["summary"] = summary or "요약 생성 실패"
+                print(f"  ✅ {name}")
 
     # Confidence signal for every summary (reused, checkpoint-restored, or
     # freshly generated) -- free, no LLM call: just how much of the file's

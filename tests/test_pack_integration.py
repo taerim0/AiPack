@@ -104,12 +104,13 @@ def test_pack_reuses_summaries_for_unchanged_files_on_a_second_run(tmp_path, mon
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
     _write(project / "README.md", "# Sample\n\nA sample project.\n")
 
-    # first pack: main.py + README.md need summarizing (2 calls), plus rules
-    # and the AI guide (1 call each) -- everything is new
+    # first pack: main.py + README.md need summarizing, but both fit in one
+    # batch (well under BATCH_SIZE) so that's 1 call, plus rules and the AI
+    # guide (1 call each) -- everything is new
     aif1 = packager.pack(str(project), auto=True, interactive=False)
     packager.save_aif(aif1)  # default path -> tmp_path/result/project.json, via the monkeypatched RESULT_DIR
     first_run_calls = provider.calls
-    assert first_run_calls == 4
+    assert first_run_calls == 3
 
     # second pack, nothing on disk changed: both summaries should be reused
     # from result/project.json -- only rules + prompt regenerate (2 calls),
@@ -138,8 +139,25 @@ def test_pack_only_resummarizes_a_changed_file(tmp_path, monkeypatch):
     provider.calls = 0
     packager.pack(str(project), auto=True, interactive=False)
 
-    # 1 summary (main.py) + rules + prompt = 3; README.md's summary is reused
+    # 1 batch call (just main.py) + rules + prompt = 3; README.md's summary is reused
     assert provider.calls == 3
+
+
+def test_pack_splits_into_multiple_batches_past_batch_size(tmp_path, monkeypatch):
+    provider = _CountingMockProvider()
+    monkeypatch.setattr(llm, "_provider", provider)
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
+    monkeypatch.setattr(packager, "BATCH_SIZE", 2)
+
+    project = tmp_path / "project"
+    for i in range(5):
+        _write(project / f"file{i}.py", f"def fn{i}():\n    return {i}\n")
+
+    packager.pack(str(project), auto=True, interactive=False)
+
+    # 5 files at BATCH_SIZE=2 -> 3 batch calls (2, 2, 1), plus rules + prompt
+    assert provider.calls == 5
 
 
 def test_pack_use_cache_false_resummarizes_everything(tmp_path, monkeypatch):
@@ -156,5 +174,5 @@ def test_pack_use_cache_false_resummarizes_everything(tmp_path, monkeypatch):
     provider.calls = 0
     packager.pack(str(project), auto=True, interactive=False, use_cache=False)
 
-    # 1 summary + rules + prompt = 3, same as an unseen project -- nothing reused
+    # 1 batch call + rules + prompt = 3, same as an unseen project -- nothing reused
     assert provider.calls == 3
