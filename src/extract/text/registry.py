@@ -8,12 +8,14 @@ TEXT_COMPRESSORS.
 
 from typing import Callable
 
-from extract.text.json_compressor import compress_json
-from extract.text.markdown_compressor import compress_markdown
+from extract.text.json import compress_json
+from extract.text.markdown import compress_markdown
+from extract.text.txt import compress_txt
 
 TEXT_COMPRESSORS: dict[str, Callable[[str], str]] = {
     ".json": compress_json,
     ".md": compress_markdown,
+    ".txt": compress_txt,
 }
 
 

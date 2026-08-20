@@ -4,7 +4,7 @@ import re
 # eliding the rest with a marker.
 MAX_LIST_ITEMS = 5
 # Paragraphs: text longer than this gets truncated with a marker appended.
-# (same threshold as json_compressor's MAX_STRING_LEN, for consistency)
+# (same threshold as json's MAX_STRING_LEN, for consistency)
 MAX_PARAGRAPH_LEN = 200
 # Code blocks: a body longer than this many lines keeps only the first few,
 # eliding the rest with a marker.
@@ -58,8 +58,8 @@ def compress_markdown(text: str) -> str:
       appended
 
     There's no Tree-sitter grammar for Markdown, so this isn't real AST parsing —
-    it's a regex-based, line-oriented approximation. Unlike json_compressor there's
-    no "parsing failed -> return the original" case to handle, since Markdown is
+    it's a regex-based, line-oriented approximation. Unlike json there's no
+    "parsing failed -> return the original" case to handle, since Markdown is
     always "valid"; compression is always attempted.
     """
     lines = text.splitlines()
@@ -128,7 +128,7 @@ def _compress_codeblock_body(body: list[str], lang: str) -> list[str]:
 
     # Deferred import: see the comment next to compress_file() in compressor.py for
     # why. This breaks the cycle extract.code.compressor -> extract.text.registry ->
-    # markdown_compressor -> extract.code.compressor by importing inside the function.
+    # extract.text.markdown -> extract.code.compressor by importing inside the function.
     from extract.code.compressor import compress_code
 
     compressed = compress_code("\n".join(body), ext)

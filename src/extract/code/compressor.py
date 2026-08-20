@@ -18,7 +18,7 @@ def compress_file(file_path: str) -> str:
 
     # No Tree-sitter grammar for this extension -> use a text-only compressor if
     # one is registered, else pass the file through unchanged.
-    # (Imported here, not at module top: extract.text.registry -> markdown_compressor
+    # (Imported here, not at module top: extract.text.registry -> extract.text.markdown
     # calls back into this module's compress_code() for code-block compression, so a
     # top-level import in both directions would create a circular import. A deferred
     # import breaks the cycle since both modules are already fully loaded by then.)
@@ -32,7 +32,7 @@ def compress_code(code: str, ext: str) -> str | None:
 
     Returns None if ext isn't a supported language, so callers can fall back to
     something else. compress_file() and Markdown code-block compression
-    (markdown_compressor) share this logic — whether it's a real file or a code
+    (extract.text.markdown) share this logic — whether it's a real file or a code
     block inside a Markdown doc, "how to compress this language" should be the
     same either way.
     """
