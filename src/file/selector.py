@@ -14,17 +14,17 @@ def select_files(files: list[str], root_path: str) -> list[str]:
     print("\n선택 (쉼표로 구분 / 전체=a / 취소=q): ", end="")
     user_input = input().strip()
 
-    # 취소
+    # cancel
     if user_input.lower() == "q":
         print("취소됨.")
         return []
 
-    # 전체 선택
+    # select all
     if user_input.lower() == "a":
         print(f"\n✅ 전체 {len(files)}개 선택됨")
         return files
 
-    # 번호 선택
+    # select by number
     try:
         indices = [int(x.strip()) for x in user_input.split(",")]
         selected = []

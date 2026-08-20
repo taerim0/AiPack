@@ -34,7 +34,7 @@ def collect_files(root_path: str) -> list[str]:
 
     collected = []
     for dirpath, dirnames, filenames in os.walk(root):
-        # 제외 폴더는 아예 순회 안 함
+        # skip walking into excluded directories entirely
         dirnames[:] = [
             d for d in dirnames
             if not spec.match_file(

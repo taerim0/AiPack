@@ -13,8 +13,8 @@ from llm import analyze_file_summary, analyze_text_summary, analyze_rules, analy
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
 
-# 파일별 summary를 병렬 요청할 때 쓰는 동시 실행 수.
-# LLM API 레이트리밋을 고려해 보수적으로 잡음 — 필요하면 조정.
+# Concurrency used when requesting per-file summaries in parallel.
+# Kept conservative with LLM API rate limits in mind — adjust if needed.
 MAX_WORKERS = 4
 
 
@@ -44,11 +44,12 @@ def delete_checkpoint(root_path: str) -> None:
 
 
 def _rel_key(file_path: str, root: Path) -> str:
-    """파일의 프로젝트 루트 기준 상대경로를 aif.json/체크포인트 키로 쓴다.
+    """Uses the file's path relative to the project root as its aif.json/checkpoint key.
 
-    파일명(basename)만 쓰면 서로 다른 폴더에 있는 동명 파일(예: 여러 모듈의
-    init.py, config.py)이 같은 키로 겹쳐 마지막 파일이 앞 파일을 조용히
-    덮어쓴다. 상대경로를 키로 쓰면 그런 충돌이 생기지 않는다.
+    Using just the basename would collide for same-named files in different
+    folders (e.g. multiple modules each with their own init.py, config.py),
+    silently letting the last one overwrite the earlier ones. A relative-path
+    key avoids that.
     """
     try:
         return Path(file_path).relative_to(root).as_posix()
@@ -75,10 +76,10 @@ def handle_llm_failure(name: str, field: str, current_aif: dict, root_path: str)
 
 
 def _request_summary(file_path: str, data: dict) -> str:
-    """파일 하나의 summary를 한 번 시도해서 돌려준다. 실패하면 빈 문자열.
+    """Tries once to get one file's summary; returns an empty string on failure.
 
-    (네트워크 재시도는 llm.generate() 내부에서 이미 처리하므로 여기선
-    한 번만 시도한다 — 사용자 개입 여부는 호출하는 쪽에서 결정)
+    (Network retries are already handled inside llm.generate(), so this only
+    tries once — whether to involve the user is up to the caller.)
     """
     if data["signatures"] or data["dependencies"]:
         response = analyze_file_summary(
@@ -110,7 +111,7 @@ def _current_aif_snapshot(root: Path, files_data: dict, rules: list = None, prom
 def pack(root_path: str, auto: bool = False) -> dict:
     root = Path(root_path)
 
-    # 체크포인트 자동 감지
+    # auto-detect a checkpoint
     checkpoint = load_checkpoint(root_path)
     if checkpoint:
         print(f"\n  📂 체크포인트 발견")
@@ -121,15 +122,15 @@ def pack(root_path: str, auto: bool = False) -> dict:
             checkpoint = None
             delete_checkpoint(root_path)
 
-    # 체크포인트에서 복원
+    # restore from checkpoint
     restored_rules = checkpoint.get("rules", []) if checkpoint else []
     restored_prompt = checkpoint.get("project", {}).get("prompt", "") if checkpoint else ""
 
-    # 1. 파일 수집
+    # 1. Collect files
     print("\n📁 파일 수집 중...")
     files = collect_files(root_path)
 
-    # 2. 보안 스캔
+    # 2. Security scan
     print("🔒 보안 스캔 중...")
     scan_result = scan_files(files)
     safe_files = scan_result["safe"]
@@ -139,7 +140,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
         for f in scan_result["dangerous"]:
             print(f"  ❌ {Path(f).name}")
 
-    # 3. 파일 선택
+    # 3. Select files
     if auto:
         selected = safe_files
         print(f"  ✅ 전체 {len(selected)}개 파일 선택됨")
@@ -150,7 +151,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
         print("선택된 파일 없음.")
         return {}
 
-    # 4. Tree-sitter 분석
+    # 4. Tree-sitter analysis
     print("\n🔍 코드 구조 분석 중...")
     files_data = {}
     signatures_map = {}
@@ -158,7 +159,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
     for file_path in selected:
         name = _rel_key(file_path, root)
 
-        # 체크포인트에서 복원
+        # restore from checkpoint
         if checkpoint and name in checkpoint.get("files_data", {}):
             print(f"  ✅ {name} (체크포인트에서 복원)")
             files_data[file_path] = checkpoint["files_data"][name]
@@ -184,10 +185,10 @@ def pack(root_path: str, auto: bool = False) -> dict:
 
         print(f"  ✅ {name}")
 
-    # 5. LLM 분석
-    # summary는 correct_aif()에서 파일마다 사람이 검수/수정하므로, 여기서는
-    # 재시도 메뉴 없이 병렬로 한 번씩 시도하고 실패한 파일은 플레이스홀더로
-    # 채운다 (틀린 요약이 있어도 다음 단계에서 바로잡힌다).
+    # 5. LLM analysis
+    # Each file's summary is human-reviewed/corrected in correct_aif() later, so
+    # this skips the retry menu: try each file once in parallel and fill failures
+    # with a placeholder (a wrong summary still gets fixed in the next step).
     print("\n🤖 LLM 분석 중...")
     pending = {
         fp: data for fp, data in files_data.items() if not data.get("summary")
@@ -204,7 +205,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
             files_data[fp]["summary"] = summary
             print(f"  ✅ {_rel_key(fp, root)}")
 
-    # 룰 추출 (체크포인트에서 복원)
+    # extract rules (restored from checkpoint if available)
     rules = restored_rules
     if not rules:
         print("  📋 코딩 룰 추출 중...")
@@ -231,7 +232,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
     else:
         print("  📋 코딩 룰 (체크포인트에서 복원)")
 
-    # 프롬프트 생성 (체크포인트에서 복원)
+    # generate prompt (restored from checkpoint if available)
     prompt = restored_prompt
     if not prompt:
         print("  ✍️  AI 가이드 생성 중...")
@@ -262,11 +263,11 @@ def pack(root_path: str, auto: bool = False) -> dict:
     else:
         print("  ✍️  AI 가이드 (체크포인트에서 복원)")
 
-    # 6. 토큰 카운팅
+    # 6. Token counting
     print("\n📊 토큰 분석 중...")
     token_results, _ = analyze_tokens_with_compression(selected)
 
-    # 7. AIF.json 조립
+    # 7. Assemble AIF.json
     aif = {
         "project": {
             "name": root.name,
@@ -293,7 +294,7 @@ def pack(root_path: str, auto: bool = False) -> dict:
         }
     }
 
-    # 완료 시 체크포인트 삭제
+    # delete the checkpoint on success
     delete_checkpoint(root_path)
 
     return aif

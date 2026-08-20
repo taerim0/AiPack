@@ -1,23 +1,24 @@
 import json
 
-# 배열: 이 개수를 넘으면 앞쪽 몇 개만 남기고 나머지는 마커로 축약한다.
+# Arrays: beyond this many items, keep only the leading ones and elide the rest with a marker.
 MAX_ARRAY_ITEMS = 3
-# 문자열: 이 길이를 넘으면 잘라내고 마커를 붙인다.
+# Strings: beyond this length, truncate and append a marker.
 MAX_STRING_LEN = 200
 
 MARKER = "⋮----"
 
 
 def compress_json(text: str) -> str:
-    """JSON 파일을 구조(키)는 유지하고 반복/장문 콘텐츠만 축약해서 돌려준다.
+    """Compresses JSON by keeping structure (keys) and eliding repetitive/long content.
 
-    코드 압축이 함수 시그니처는 남기고 body만 마커로 지우는 것과 같은 원리:
-    dict의 키, 짧은 값, 짧은 배열은 그대로 두고
-    - MAX_ARRAY_ITEMS를 넘는 배열은 앞쪽 몇 개만 남기고 나머지는 마커로 대체
-    - MAX_STRING_LEN을 넘는 문자열은 잘라내고 마커를 붙임
-    들여쓰기도 제거해 순수 포맷팅 토큰도 같이 줄인다.
+    Same idea as code compression, which keeps function signatures and blanks only
+    the body: dict keys, short values, and short arrays are kept as-is, while
+    - an array longer than MAX_ARRAY_ITEMS keeps only the leading items, replacing
+      the rest with a marker
+    - a string longer than MAX_STRING_LEN is truncated with a marker appended
+    Indentation is also stripped, cutting pure formatting tokens too.
 
-    유효한 JSON이 아니면(파싱 실패) 원본을 그대로 반환한다.
+    Returns the original text unchanged if it isn't valid JSON (parsing failed).
     """
     try:
         data = json.loads(text)

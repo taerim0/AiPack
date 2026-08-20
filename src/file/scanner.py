@@ -4,7 +4,7 @@ import re
 
 from file.textutil import read_text
 
-# Secretlint 실패 시 fallback용 패턴
+# fallback patterns used when secretlint fails/isn't available
 SENSITIVE_PATTERNS = [
     r'AWS_SECRET\s*=\s*["\']',
     r'API_KEY\s*=\s*["\']',
@@ -25,7 +25,7 @@ def _scan_with_secretlint(file_path: str) -> bool:
         findings = json.loads(result.stdout)
         return len(findings["messages"]) > 0
     except (json.JSONDecodeError, KeyError, FileNotFoundError):
-        return None  # Secretlint 실패 → fallback
+        return None  # secretlint failed -> fallback
 
 
 def _scan_with_pattern(file_path: str) -> bool:
@@ -40,10 +40,10 @@ def _scan_with_pattern(file_path: str) -> bool:
 
 
 def scan_file(file_path: str) -> bool:
-    # 1. Secretlint 시도
+    # 1. try secretlint
     result = _scan_with_secretlint(file_path)
 
-    # 2. Secretlint 실패 시 패턴 기반 fallback
+    # 2. pattern-based fallback if secretlint failed
     if result is None:
         return _scan_with_pattern(file_path)
 

@@ -1,8 +1,8 @@
-"""언어별 Tree-sitter 처리 설정을 한 곳에 모아둔다.
+"""Collects per-language Tree-sitter processing config in one place.
 
-새 확장자를 지원하려면 이 파일에 LanguageConfig 항목 하나(+ 필요하면 dependency
-핸들러 하나)만 추가하면 된다. extractor.py / compressor.py는 이 config만
-참조하고, 언어별 노드 타입을 직접 하드코딩하지 않는다.
+Supporting a new extension means adding one LanguageConfig entry here (plus a
+dependency handler if needed) — nothing else. extractor.py / compressor.py only
+ever reference this config; they don't hardcode per-language node types themselves.
 """
 
 from dataclasses import dataclass
@@ -13,10 +13,11 @@ import tree_sitter_python as tspython
 import tree_sitter_java as tsjava
 import tree_sitter_typescript as tstypescript
 
-# import 구문 노드를 만나면 results에 모듈명을 채우고 True(처리 완료, 자식 순회
-# 중단)를 반환한다. import 구문이 아니면 False를 반환해 순회가 계속되게 한다.
-# 언어마다 import 문법이 완전히 다르므로(필드 유무, 노드 이름 등) 공용 로직으로
-# 묶지 않고 언어별로 작은 함수를 따로 둔다.
+# When an import-statement node is hit, fills results with the module name and
+# returns True (handled, stop recursing into children). Returns False for
+# non-import nodes so traversal continues. Import syntax differs too much between
+# languages (field presence, node names, etc.) to share one generic routine, so
+# each language gets its own small handler instead.
 DependencyHandler = Callable[[Node, list], bool]
 
 
@@ -38,7 +39,8 @@ def _py_dependency_handler(node: Node, results: list) -> bool:
 
 def _java_dependency_handler(node: Node, results: list) -> bool:
     if node.type == "import_declaration":
-        # 필드가 없어 텍스트에서 "import"/"static"/";"를 걷어내고 모듈 경로만 남긴다.
+        # no field for this, so strip "import"/"static"/";" from the raw text to
+        # leave just the module path.
         text = node.text.decode().strip().rstrip(";").strip()
         text = text.removeprefix("import").strip()
         text = text.removeprefix("static").strip()
@@ -62,8 +64,8 @@ def _ts_dependency_handler(node: Node, results: list) -> bool:
 @dataclass(frozen=True)
 class LanguageConfig:
     language: Language
-    function_types: list[str]              # 시그니처 추출 + 본문 압축 대상 노드 타입
-    dependency_handler: DependencyHandler   # import 구문 추출 전략
+    function_types: list[str]              # node types targeted for signature extraction + body compression
+    dependency_handler: DependencyHandler   # strategy for extracting import statements
 
 
 LANGUAGE_CONFIGS: dict[str, LanguageConfig] = {

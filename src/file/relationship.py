@@ -2,19 +2,20 @@ from pathlib import Path
 
 
 def build_stem_map(file_names) -> dict:
-    """파일 stem(확장자 제외 파일명) → 파일명 매핑.
-    import 경로("extract.code.parser")의 마지막 segment와 매칭하는 데 쓴다."""
+    """Maps file stem (file name without extension) -> file name.
+    Used to match against the last segment of an import path (e.g. "extract.code.parser")."""
     return {Path(name).stem: name for name in file_names}
 
 
 def resolve_dependency(dep: str, stem_map: dict) -> str | None:
-    """dependencies 항목을 프로젝트 내부 파일명으로 매칭.
+    """Matches a dependencies entry against an internal project file name.
 
-    dep는 두 가지 형태로 들어올 수 있다:
-    - Tree-sitter가 뽑은 원본 import 경로 (예: "extract.code.extractor")
-    - 사용자가 correct_relationships에서 옮겨 붙인, 이미 확정된 파일명 (예: "extractor.py")
+    dep can come in two shapes:
+    - a raw import path extracted by Tree-sitter (e.g. "extract.code.extractor")
+    - an already-pinned file name from a prior move in correct_relationships
+      (e.g. "extractor.py")
 
-    매치되면 파일명을, 외부 의존성이면 None을 돌려준다.
+    Returns the file name on a match, or None for an external dependency.
     """
     if dep in stem_map.values():
         return dep
@@ -35,7 +36,7 @@ def build_tree(files: dict) -> dict:
             else:
                 external.append(dep)
         tree[name] = {
-            "internal": list(dict.fromkeys(internal)),   # 순서 유지 + 중복 제거
+            "internal": list(dict.fromkeys(internal)),   # keep order, drop duplicates
             "external": list(dict.fromkeys(external))
         }
 
@@ -49,7 +50,7 @@ def print_tree(tree: dict):
     for deps in tree.values():
         all_children.update(deps["internal"])
 
-    # 아무도 참조하지 않는 파일부터 시작 (전부 사이클이면 그냥 전체를 root로)
+    # start from files nobody references (if it's all one cycle, treat everything as root)
     roots = [name for name in tree if name not in all_children] or list(tree.keys())
 
     def print_node(name, ancestors, depth=1):

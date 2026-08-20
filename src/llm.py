@@ -7,7 +7,7 @@ load_dotenv()
 
 
 def _clean_json(text: str) -> str:
-    # 마크다운 코드블록 제거
+    # strip markdown code fences
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
@@ -17,11 +17,12 @@ def _clean_json(text: str) -> str:
 
 
 class GeminiProvider:
-    """Gemini REST API 프로바이더.
+    """Gemini REST API provider.
 
-    다른 LLM을 추가하려면 이 클래스처럼 generate(prompt, retry) -> str 만
-    구현해서 아래 PROVIDERS에 한 줄 등록하면 된다. analyze_* 함수들은
-    provider가 뭐든 상관없이 모듈 레벨 generate()만 호출한다.
+    To add another LLM, implement generate(prompt, retry) -> str like this
+    class and register it in PROVIDERS below with one line. The analyze_*
+    functions only ever call the module-level generate(), regardless of
+    which provider is active.
     """
 
     def __init__(self, api_key: str | None = None, model: str = "gemini-flash-latest"):
@@ -46,7 +47,7 @@ class GeminiProvider:
             error_msg = data.get("error", {}).get("message", "unknown")
 
             if error_code in [503, 429]:
-                wait = 5 * (attempt + 1)  # 5초, 10초, 15초
+                wait = 5 * (attempt + 1)  # 5s, 10s, 15s, ...
                 print(f"  ⚠️  서버 과부하, {wait}초 후 재시도 ({attempt+1}/{retry})")
                 time.sleep(wait)
                 continue
@@ -57,8 +58,8 @@ class GeminiProvider:
         return "{}"
 
 
-# 지원 프로바이더 레지스트리. 새 LLM을 추가하려면 여기에 클래스 하나 더하고
-# LLM_PROVIDER 환경변수로 고르게 하면 된다 (예: PROVIDERS["claude"] = ClaudeProvider).
+# Registry of supported providers. To add a new LLM, add a class here and let
+# LLM_PROVIDER select it (e.g. PROVIDERS["claude"] = ClaudeProvider).
 PROVIDERS = {
     "gemini": GeminiProvider,
 }
@@ -67,7 +68,7 @@ _provider = PROVIDERS[os.getenv("LLM_PROVIDER", "gemini")]()
 
 
 def generate(prompt: str, retry: int = 5) -> str:
-    """현재 활성 LLM 프로바이더에 위임. 스레드 세이프 (provider별 상태는 읽기 전용)."""
+    """Delegates to the currently active LLM provider. Thread-safe (provider state is read-only)."""
     return _provider.generate(prompt, retry=retry)
 
 

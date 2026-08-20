@@ -9,12 +9,13 @@ def correct_relationships(aif: dict) -> dict:
     stem_map = build_stem_map(files)
 
     def resolve(dep: str) -> str | None:
-        """dep(import 경로 또는 이미 확정된 파일명)이 프로젝트 내부 파일이면 파일명을, 아니면 None."""
+        """Returns the matched file name if dep (an import path, or a file name already
+        pinned by a prior move) is an internal project file, else None."""
         matched = resolve_dependency(dep, stem_map)
         return matched if matched in files else None
 
     def has_cycle(from_file: str, to_file: str) -> bool:
-        """to_file이 from_file의 조상인지 확인 (순환 참조 감지)"""
+        """Checks whether to_file is an ancestor of from_file (cycle detection)."""
         visited = set()
         queue = [to_file]
         while queue:
@@ -60,7 +61,7 @@ def correct_relationships(aif: dict) -> dict:
             print(f"  [{i}] {name}")
             print_node(name, {name})
 
-    # 여러 번 수정 가능하게 루프
+    # loop so the user can make multiple moves
     while True:
         print_current_tree()
         print("\n  이동할 파일 번호 (완료=q): ", end="")
@@ -95,19 +96,20 @@ def correct_relationships(aif: dict) -> dict:
                 print("  ⚠️  같은 파일 선택 불가")
                 continue
 
-            # 순환 참조 감지
+            # cycle detection
             if has_cycle(move_file, parent_file):
                 print(f"  ⚠️  순환 참조 발생 → 이동 불가")
                 continue
 
-            # 기존 부모에서 제거 (원본이 import 경로든 이전에 옮겨 붙인 파일명이든 매칭)
+            # remove from the old parent (matches whether the original entry was an
+            # import path or an already-pinned file name from a prior move)
             for name in files:
                 deps = aif["files"][name].get("dependencies", [])
                 aif["files"][name]["dependencies"] = [
                     d for d in deps if resolve(d) != move_file
                 ]
 
-            # 새 부모의 자식으로 추가
+            # add as a child of the new parent
             if "dependencies" not in aif["files"][parent_file]:
                 aif["files"][parent_file]["dependencies"] = []
             aif["files"][parent_file]["dependencies"].append(move_file)
@@ -124,21 +126,21 @@ def correct_aif(aif: dict) -> dict:
     print("✏️  사용자 보정 (엔터 = 유지, 내용 입력 = 수정)")
     print("=" * 50)
 
-    # 1. 프로젝트 이름 수정
+    # 1. Correct project name
     current_name = aif["project"]["name"]
     print(f"\n📌 프로젝트 이름: {current_name}")
     new_name = input("  수정 (엔터=유지): ").strip()
     if new_name:
         aif["project"]["name"] = new_name
 
-    # 2. AI 가이드 수정
+    # 2. Correct AI guide
     current_prompt = aif["project"]["prompt"]
     print(f"\n✍️  AI 가이드:\n  {current_prompt}")
     new_prompt = input("  수정 (엔터=유지): ").strip()
     if new_prompt:
         aif["project"]["prompt"] = new_prompt
 
-    # 3. 코딩 룰 수정
+    # 3. Correct coding rules
     print(f"\n📋 코딩 룰:")
     for i, rule in enumerate(aif["rules"], 1):
         print(f"  [{i}] {rule}")
@@ -161,7 +163,7 @@ def correct_aif(aif: dict) -> dict:
         except (ValueError, IndexError):
             print("  ⚠️  잘못된 입력")
 
-    # 4. 파일별 summary 수정
+    # 4. Correct per-file summaries
     print(f"\n📄 파일별 Summary:")
     for file_name, data in aif["files"].items():
         print(f"\n  {file_name}: {data['summary']}")
@@ -171,7 +173,7 @@ def correct_aif(aif: dict) -> dict:
 
     aif = correct_relationships(aif)
 
-    # 보정 완료 후 relationships 생성
+    # build relationships after correction is done
     aif["relationships"] = build_tree(aif["files"])
 
     print("\n✅ 보정 완료")

@@ -117,14 +117,14 @@ def main():
         selected = select_files(safe_files, args.path)
 
     elif args.command == "analyze":
-        # 1. 파일 수집
+        # 1. Collect files
         files = collect_files(args.path)
         scan_result = scan_files(files)
         safe_files = scan_result["safe"]
 
         print(f"\n📁 분석 대상: {len(safe_files)}개 파일\n")
 
-        # 2. 파일별 분석
+        # 2. Per-file analysis
         signatures_map = {}
         summaries = {}
 
@@ -145,7 +145,7 @@ def main():
 
             signatures_map[file] = sigs
 
-        # 3. 룰 추출
+        # 3. Extract rules
         print(f"\n  📋 코딩 룰 추출 중...")
         rules_response = analyze_rules(signatures_map)
         try:
@@ -153,7 +153,7 @@ def main():
         except json.JSONDecodeError:
             rules_data = {"rules": []}
 
-        # 4. 프롬프트 생성
+        # 4. Generate prompt
         print(f"  ✍️  AI 가이드 생성 중...\n")
         prompt_response = analyze_prompt(
             project_name=Path(args.path).name,
@@ -165,7 +165,7 @@ def main():
         except json.JSONDecodeError:
             prompt_data = {"prompt": "생성 실패"}
 
-        # 5. 결과 출력
+        # 5. Print results
         print("=" * 50)
         print("📄 파일별 Summary")
         print("=" * 50)
@@ -186,7 +186,7 @@ def main():
     elif args.command == "pack":
         aif = pack(args.path, auto=args.auto)
         if aif:
-            aif = correct_aif(aif)  # 보정 + relationships 생성
+            aif = correct_aif(aif)  # correct + build relationships
             save_aif(aif, args.output)
 
             print("\n" + "=" * 50)
