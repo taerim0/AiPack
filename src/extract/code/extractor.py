@@ -1,13 +1,7 @@
+from extract.code.languages import get_language_config
 from extract.code.parser import get_parser
 from file.textutil import read_text
 from pathlib import Path
-
-FUNCTION_NODE_TYPES = {
-    ".py":   ["function_definition"],
-    ".java": ["method_declaration"],
-    ".ts":   ["function_declaration", "method_definition"],
-    ".js":   ["function_declaration", "method_definition"],
-}
 
 def extract_signatures(file_path: str) -> list[str]:
     parser = get_parser(file_path)
@@ -18,8 +12,8 @@ def extract_signatures(file_path: str) -> list[str]:
     if code is None:
         return []
 
-    ext = Path(file_path).suffix
-    node_types = FUNCTION_NODE_TYPES.get(ext, [])
+    config = get_language_config(Path(file_path).suffix)
+    node_types = config.function_types if config else []
 
     tree = parser.parse(bytes(code, "utf8"))
     results = []
@@ -36,9 +30,13 @@ def extract_dependencies(file_path: str) -> list[str]:
     if code is None:
         return []
 
+    config = get_language_config(Path(file_path).suffix)
+    if not config:
+        return []
+
     tree = parser.parse(bytes(code, "utf8"))
     results = []
-    _traverse_dependencies(tree.root_node, results)
+    _traverse_dependencies(tree.root_node, results, config.dependency_handler)
     return results
 
 
@@ -74,21 +72,12 @@ def _traverse_signatures(node, results: list, node_types: list):
         _traverse_signatures(child, results, node_types)
 
 
-def _traverse_dependencies(node, results: list):
-    if node.type == "import_from_statement":
-        module = node.child_by_field_name("module_name")
-        if module:
-            results.append(module.text.decode())
-        return
-
-    if node.type == "import_statement":
-        for child in node.children:
-            if child.type == "dotted_name":
-                results.append(child.text.decode())
+def _traverse_dependencies(node, results: list, handler):
+    if handler(node, results):
         return
 
     for child in node.children:
-        _traverse_dependencies(child, results)
+        _traverse_dependencies(child, results, handler)
 
 
 def _traverse_api(node, results: list):

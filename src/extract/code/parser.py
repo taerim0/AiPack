@@ -1,20 +1,12 @@
 from pathlib import Path
-from tree_sitter import Language, Parser
-import tree_sitter_python as tspython
-import tree_sitter_java as tsjava
-import tree_sitter_typescript as tstypescript
+from tree_sitter import Parser
 
-LANGUAGE_MAP = {
-    ".py":   Language(tspython.language()),
-    ".java": Language(tsjava.language()),
-    ".ts":   Language(tstypescript.language_typescript()),
-    ".js":   Language(tstypescript.language_tsx()),
-}
+from extract.code.languages import get_language_config
+
 
 def get_parser(file_path: str) -> Parser | None:
     ext = Path(file_path).suffix
-    language = LANGUAGE_MAP.get(ext)
-    if not language:
+    config = get_language_config(ext)
+    if not config:
         return None
-    parser = Parser(language)
-    return parser
+    return Parser(config.language)

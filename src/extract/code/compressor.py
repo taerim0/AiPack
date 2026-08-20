@@ -1,5 +1,7 @@
+from extract.code.languages import get_language_config
 from extract.code.parser import get_parser
 from file.textutil import read_text
+from pathlib import Path
 
 MARKER = "    ⋮----"
 
@@ -15,12 +17,15 @@ def compress_file(file_path: str) -> str:
     if not parser:
         return code
 
+    config = get_language_config(Path(file_path).suffix)
+    function_types = config.function_types if config else []
+
     tree = parser.parse(bytes(code, "utf8"))
     lines = code.splitlines()
 
     # body 라인 범위 수집
     body_ranges = []
-    _collect_bodies(tree.root_node, body_ranges)
+    _collect_bodies(tree.root_node, body_ranges, function_types)
 
     # 라인 단위로 body 제거
     result = []
@@ -40,9 +45,9 @@ def compress_file(file_path: str) -> str:
     return "\n".join(result)
 
 
-def _collect_bodies(node, ranges: list):
+def _collect_bodies(node, ranges: list, function_types: list):
 
-    if node.type == "function_definition":
+    if node.type in function_types:
         body = node.child_by_field_name("body")
         if body:
             start = body.start_point[0]
@@ -51,4 +56,4 @@ def _collect_bodies(node, ranges: list):
         return  # body 내부 순회 안 함
 
     for child in node.children:
-        _collect_bodies(child, ranges)
+        _collect_bodies(child, ranges, function_types)
