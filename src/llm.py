@@ -73,12 +73,12 @@ def generate(prompt: str, retry: int = 5) -> str:
 
 def analyze_file_summary(file_path: str, signatures: list[str], dependencies: list[str]) -> str:
     prompt = f"""
-아래 파일 정보를 보고 이 파일의 역할을 한 줄로 요약해줘.
-JSON으로만 답해. 다른 말 하지 마.
+Based on the file info below, summarize this file's role in one line.
+Respond with JSON only, nothing else.
 
-파일명: {file_path}
-함수 시그니처: {signatures}
-의존성: {dependencies}
+File: {file_path}
+Function signatures: {signatures}
+Dependencies: {dependencies}
 
 {{"summary": "..."}}
 """
@@ -87,11 +87,11 @@ JSON으로만 답해. 다른 말 하지 마.
 
 def analyze_text_summary(file_path: str, content: str) -> str:
     prompt = f"""
-아래 파일 내용을 보고 이 파일의 역할을 한 줄로 요약해줘.
-JSON으로만 답해. 다른 말 하지 마.
+Based on the file content below, summarize this file's role in one line.
+Respond with JSON only, nothing else.
 
-파일명: {file_path}
-내용:
+File: {file_path}
+Content:
 {content[:500]}
 
 {{"summary": "..."}}
@@ -101,11 +101,11 @@ JSON으로만 답해. 다른 말 하지 마.
 
 def analyze_rules(signatures_map: dict) -> str:
     prompt = f"""
-아래 프로젝트의 함수 시그니처 패턴을 분석해서
-암묵적인 코딩 룰을 추출해줘.
-JSON으로만 답해. 다른 말 하지 마.
+Analyze the function signature patterns of the project below
+and extract its implicit coding rules.
+Respond with JSON only, nothing else.
 
-시그니처 목록: {signatures_map}
+Signature list: {signatures_map}
 
 {{"rules": ["...", "...", "..."]}}
 """
@@ -114,14 +114,13 @@ JSON으로만 답해. 다른 말 하지 마.
 
 def analyze_prompt(project_name: str, architecture: list[str], rules: list[str]) -> str:
     prompt = f"""
-아래 프로젝트 정보를 보고
-AI가 이 프로젝트를 처음 봤을 때 바로 이해할 수 있도록
-핵심 컨텍스트를 2-3문장으로 만들어줘.
-JSON으로만 답해. 다른 말 하지 마.
+Based on the project info below, write 2-3 sentences of core context
+that let an AI understand this project immediately on first look.
+Respond with JSON only, nothing else.
 
-프로젝트명: {project_name}
-아키텍처: {architecture}
-코딩 룰: {rules}
+Project name: {project_name}
+Architecture: {architecture}
+Coding rules: {rules}
 
 {{"prompt": "..."}}
 """
@@ -129,23 +128,23 @@ JSON으로만 답해. 다른 말 하지 마.
 
 def analyze_relationships(file_summaries: dict) -> str:
     prompt = f"""
-아래 파일들의 이름과 내용 일부를 보고
-파일 간의 직접적인 의존 관계만 추출해줘.
+Based on the file names and partial content below,
+extract only the direct dependency relationships between files.
 
-규칙:
-- 한 파일이 다른 파일을 직접 참조하거나 사용하는 경우만 포함
-- 단순히 주제가 비슷한 경우는 제외
-- 관계가 없으면 빈 배열
+Rules:
+- Include only cases where one file directly references or uses another
+- Exclude cases that are merely related in topic
+- Use an empty array if there is no relationship
 
-JSON으로만 답해. 다른 말 하지 마.
+Respond with JSON only, nothing else.
 
-파일 목록:
+File list:
 {file_summaries}
 
 {{
   "relationships": {{
-    "파일A": ["직접 참조하는 파일B"],
-    "파일B": []
+    "fileA": ["fileB it directly references"],
+    "fileB": []
   }}
 }}
 """
