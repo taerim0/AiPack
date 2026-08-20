@@ -35,7 +35,7 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 - **Security scanning built in** — `secretlint` first, regex fallback second; sensitive files never make it past collection.
 - **Human-in-the-loop correction, opt-in** — every LLM output (summaries, rules, project guide, dependency tree) is reviewable and editable before anything is saved, or skippable entirely with `--auto-correct`. File selection (`--auto`) and correction (`--auto-correct`) are independent flags, so `pack` can run fully headless for CI or scripted use.
 - **Honest token accounting** — `tiktoken`-based before/after comparison across GPT-4o, GPT-3.5, and GPT-4 encodings, measured against what actually ships in `aif.json`, not just the raw compression ratio.
-- **Lean output, detail on request** — `aif.json` stays small (summaries + relationships); the full compressed body per file lives in `detail.json`, ready to be fetched on demand once an MCP layer exists.
+- **Lean output, detail on request** — `aif.json` stays small (summaries + relationships); the full compressed body per file lives in `detail.json`, fetched on demand by the MCP server's `get_detail` tool (see below) rather than shipped on every file up front.
 - **Resilient to LLM flakiness** — retries with backoff on rate limits, and a checkpoint system that lets a failed run resume later instead of restarting from scratch.
 - **Provider-agnostic LLM layer** — swapping Gemini for another model is implementing one `generate()` method and registering it, not touching the rest of the pipeline.
 - **Not just for git repos** — works on any collection of local files with relationships across extensions: game mods, asset projects, whatever isn't a typical software repo.
@@ -78,6 +78,7 @@ python src/cli.py pack ./your-project/ -o output/out.json
 | `tree <path>` | Dependency tree only |
 | `search <path> <pattern>` | Regex search across all safe files (`--context N`, `--ignore-case`) |
 | `detail <name>.detail.json <file-key>` | Partial read of one file's compressed body (`--start`/`--end`) |
+| `freshness <path> <name>.cache.json` | Hash-check `aif.json` against the files on disk — no LLM calls |
 | `select <path>` | Interactive file selection only |
 | `analyze <path>` | LLM analysis only |
 | `signatures \| dependencies \| api \| compress \| debug <file>` | Run one extraction step on a single file |
@@ -115,13 +116,43 @@ Want to smoke-test `pack` against a real project without waiting on Gemini? `LLM
 }
 ```
 
+```jsonc
+// out.cache.json — internal bookkeeping, not meant for an AI to read; a
+// content-hash snapshot of what was packed, for check_freshness to diff
+// against later
+{
+  "src/App.tsx": "3b1c2e...(sha256)"
+}
+```
+
+## MCP server
+
+Query an already-packed project directly from Claude Code, Cursor, or any other MCP client — no copy-pasting `aif.json` into a prompt.
+
+```bash
+python src/mcp_server.py                              # run directly (stdio transport)
+claude mcp add ziplex -- python src/mcp_server.py      # register with Claude Code, from the repo root
+```
+
+| Tool | What it does |
+|---|---|
+| `get_overview(aif_path)` | Project guide, coding rules, token stats — call this first |
+| `list_files(aif_path)` | Every file mapped to its one-line summary |
+| `get_dependents(aif_path, file)` | Files that directly depend on `file` |
+| `get_blast_radius(aif_path, file)` | Every file transitively affected by a change to `file` |
+| `get_detail(aif_path, file, start_line?, end_line?)` | A file's compressed source, in full or by line range |
+| `check_freshness(project_path, aif_path)` | Hash-check the pack against the files on disk — no LLM calls |
+| `search_project(project_path, pattern, ...)` | Regex search across the project's original files |
+
+Read-only and deliberately so: every tool serves an `aif.json`/`detail.json` a human already reviewed via `correct_aif()` — none of them re-pack or re-correct a project on their own, since that would skip the human-in-the-loop step that's the point of Ziplex. `get_dependents`/`get_blast_radius` run on the same human-corrected `relationships` graph `pack` builds — not a fresh, uncorrected guess.
+
+`aif.json`/`detail.json` are snapshots from the last `pack` run, so they can drift from an actively-changing project. Every tool above except `search_project` (which always reads files live) trusts that snapshot — call `check_freshness` first if you suspect it's gone stale; it won't fix anything, but it tells you whether a re-`pack` is warranted before you trust the rest.
+
 ## Tech stack
 
-Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript grammars) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, plain REST via `requests`) · `secretlint` · `pathspec`
+Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript grammars) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, plain REST via `requests`) · [MCP](https://modelcontextprotocol.io/) · `secretlint` · `pathspec`
 
 ## Roadmap
-
-**MCP integration** — expose `aif.json`/`detail.json` as an MCP server so tools like Claude Code or Cursor can query project context on demand, pulling summaries first and fetching a specific file's detail only when it's actually needed. *The output format was already split into a lean/detail shape to make this a natural next step, not a rewrite.*
 
 **Selective file delivery to AI** — pick specific files in Ziplex and send them straight into a chat with full context attached (dependencies, signature, summary) — no copy-pasting.
 

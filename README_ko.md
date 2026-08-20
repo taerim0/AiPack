@@ -35,7 +35,7 @@ project/  ──►  수집  ──►  보안 스캔  ──►  선택  ──
 - **내장 보안 스캔** — `secretlint`를 우선 쓰고, 없으면 정규식으로 대체합니다. 민감한 파일은 수집 단계에서 걸러져 다음 단계로 아예 넘어가지 않습니다.
 - **검토는 선택 사항** — LLM이 만든 모든 결과물(요약, 룰, 프로젝트 가이드, 의존성 트리)은 저장 전에 사람이 검토·수정할 수 있고, `--auto-correct`로 통째로 건너뛸 수도 있습니다. 파일 선택(`--auto`)과 보정(`--auto-correct`)은 완전히 독립된 옵션이라, CI나 스크립트에서는 `pack`을 아예 비대화형으로 돌릴 수 있습니다.
 - **부풀리지 않는 토큰 계산** — GPT-4o, GPT-3.5, GPT-4 인코딩 기준으로 `tiktoken`을 이용해 전/후 토큰을 비교합니다. 단순 압축률이 아니라 실제로 `aif.json`에 담기는 내용을 기준으로 계산해서 숫자가 부풀려지지 않습니다.
-- **가벼운 출력, 상세 정보는 필요할 때만** — `aif.json`은 요약과 관계 정보만 담아 가볍게 유지되고, 파일별 압축 코드 전체는 `detail.json`에 따로 저장됩니다. 나중에 MCP 레이어가 생기면 필요한 파일만 골라 불러올 수 있게 하기 위해서입니다.
+- **가벼운 출력, 상세 정보는 필요할 때만** — `aif.json`은 요약과 관계 정보만 담아 가볍게 유지되고, 파일별 압축 코드 전체는 `detail.json`에 따로 저장됩니다. 모든 파일에 기본으로 딸려가는 대신, MCP 서버의 `get_detail` 툴(아래 참고)이 필요할 때만 불러옵니다.
 - **LLM 불안정성에 강함** — 레이트 리밋에 걸리면 백오프를 두고 재시도합니다. 실행이 중간에 실패해도 체크포인트 덕분에 처음부터 다시 할 필요 없이 이어서 진행할 수 있습니다.
 - **LLM 프로바이더 독립적** — Gemini를 다른 모델로 바꾸고 싶으면 `generate()` 메서드 하나만 구현해서 등록하면 끝입니다. 나머지 파이프라인은 손댈 필요가 없습니다.
 - **git 저장소 전용이 아님** — 일반적인 소프트웨어 저장소가 아니어도 상관없습니다. 게임 모드, 에셋 프로젝트처럼 여러 확장자의 파일이 서로 얽혀 있는 로컬 파일 모음이라면 무엇이든 동작합니다.
@@ -78,6 +78,7 @@ python src/cli.py pack ./your-project/ -o output/out.json
 | `tree <path>` | 의존성 트리만 |
 | `search <path> <pattern>` | 안전한 파일 전체에서 정규식 검색 (`--context N`, `--ignore-case`) |
 | `detail <name>.detail.json <file-key>` | 파일 하나의 압축 본문을 부분만 읽기 (`--start`/`--end`) |
+| `freshness <path> <name>.cache.json` | `aif.json`이 디스크의 실제 파일과 맞는지 해시로 확인 — LLM 호출 없음 |
 | `select <path>` | 대화형 파일 선택만 |
 | `analyze <path>` | LLM 분석만 |
 | `signatures \| dependencies \| api \| compress \| debug <file>` | 파일 하나에 대해 추출 단계 하나만 실행 |
@@ -115,13 +116,42 @@ pytest
 }
 ```
 
+```jsonc
+// out.cache.json — AI가 읽는 파일이 아니라 내부 관리용입니다. check_freshness가
+// 나중에 비교할 수 있도록 패킹 시점 파일 내용의 해시를 저장해둡니다
+{
+  "src/App.tsx": "3b1c2e...(sha256)"
+}
+```
+
+## MCP 서버
+
+Claude Code, Cursor 등 MCP 클라이언트에서 이미 패킹된 프로젝트를 바로 질의할 수 있습니다 — `aif.json`을 프롬프트에 복사-붙여넣기할 필요 없이요.
+
+```bash
+python src/mcp_server.py                              # 직접 실행 (stdio 트랜스포트)
+claude mcp add ziplex -- python src/mcp_server.py      # Claude Code에 등록 (레포 루트에서)
+```
+
+| 툴 | 하는 일 |
+|---|---|
+| `get_overview(aif_path)` | 프로젝트 가이드, 코딩 룰, 토큰 통계 — 가장 먼저 호출하면 됩니다 |
+| `list_files(aif_path)` | 모든 파일을 한 줄 요약과 함께 매핑 |
+| `get_dependents(aif_path, file)` | `file`을 직접 의존하는 파일들 |
+| `get_blast_radius(aif_path, file)` | `file`이 바뀌면 직간접적으로 영향받는 모든 파일 |
+| `get_detail(aif_path, file, start_line?, end_line?)` | 파일의 압축 소스, 전체 또는 줄 범위로 |
+| `check_freshness(project_path, aif_path)` | 패킹 결과가 디스크의 실제 파일과 맞는지 해시로 확인 — LLM 호출 없음 |
+| `search_project(project_path, pattern, ...)` | 프로젝트 원본 파일 전체에서 정규식 검색 |
+
+의도적으로 읽기 전용입니다 — 모든 툴은 사람이 `correct_aif()`로 이미 검토한 `aif.json`/`detail.json`을 그대로 서빙할 뿐, 어떤 툴도 프로젝트를 알아서 다시 패킹하거나 보정하지 않습니다. 그건 Ziplex의 핵심인 human-in-the-loop 단계를 건너뛰는 거니까요. `get_dependents`/`get_blast_radius`도 `pack`이 만드는 것과 같은, 사람이 보정한 `relationships` 그래프 위에서 동작합니다 — 방금 추출한 검토 안 된 그래프가 아니라요.
+
+`aif.json`/`detail.json`은 마지막 `pack` 실행 시점의 스냅샷이라, 활발히 바뀌는 프로젝트에서는 실제 상태와 어긋날 수 있습니다. `search_project`(항상 파일을 직접 읽음)를 제외한 나머지 툴은 전부 이 스냅샷을 그대로 믿습니다 — 오래됐을까 걱정되면 `check_freshness`부터 호출하세요. 뭘 고쳐주진 않지만, 나머지를 믿기 전에 다시 `pack`할 필요가 있는지는 알려줍니다.
+
 ## 기술 스택
 
-Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript 문법) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, `requests`를 통한 순수 REST 호출) · `secretlint` · `pathspec`
+Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript 문법) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, `requests`를 통한 순수 REST 호출) · [MCP](https://modelcontextprotocol.io/) · `secretlint` · `pathspec`
 
 ## 로드맵
-
-**MCP 통합** — `aif.json`/`detail.json`을 MCP 서버로 노출해서, Claude Code나 Cursor 같은 도구가 프로젝트 컨텍스트를 필요할 때마다 바로 질의할 수 있게 합니다. 우선 요약부터 가져오고, 정말 필요한 파일만 상세 정보를 그때그때 불러오는 방식입니다. *출력 포맷을 이미 lean/detail 구조로 나눠둔 덕분에, 이 작업은 재작성이 아니라 자연스러운 다음 단계가 됩니다.*
 
 **AI로의 선택적 파일 전달** — Ziplex에서 파일을 골라 복사-붙여넣기 없이 대화창에 바로 전달합니다. 파일 내용은 물론 의존성, 시그니처, 요약까지 함께 넘어갑니다.
 
