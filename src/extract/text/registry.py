@@ -8,9 +8,11 @@ extract/code/languages.py가 Tree-sitter 언어별 설정을 한 곳에 모으�
 from typing import Callable
 
 from extract.text.json_compressor import compress_json
+from extract.text.markdown_compressor import compress_markdown
 
 TEXT_COMPRESSORS: dict[str, Callable[[str], str]] = {
     ".json": compress_json,
+    ".md": compress_markdown,
 }
 
 
