@@ -8,9 +8,7 @@ Directory-scoped detail lives in nested CLAUDE.md files, loaded automatically wh
 
 ## What this is
 
-Ziplex converts a local project into `aif.json` — a structured, token-reduced context format ("AIF") that an AI can consume instantly instead of reading raw files. It combines Tree-sitter-based code compression/extraction, an LLM summarization pass (Gemini), and an optional human correction step.
-
-`aif.json` itself only ever carries summaries + relationships, not full per-file code — see the shape at the bottom of this file.
+Local project → `aif.json`: a token-reduced context format an AI reads instead of raw files. Pipeline: Tree-sitter compression/extraction → Gemini summarization → optional human correction. `aif.json` carries only summaries + relationships, never full per-file code — shape at the bottom of this file.
 
 ## Commands
 
@@ -33,16 +31,18 @@ python src/cli.py pack <project_path> -o out.json                  # custom outp
 python src/cli.py collect <project_path>            # just file collection + security scan
 python src/cli.py tokens <project_path>             # token count, before/after compression
 python src/cli.py tree <project_path>                # dependency tree only
+python src/cli.py search <project_path> <pattern> --context 2 --ignore-case  # regex search across safe files
+python src/cli.py detail <name>.detail.json <file-key> --start 10 --end 40   # partial read of one file's compressed body
 python src/cli.py signatures|dependencies|api|compress|debug <single_file>
 ```
-*`--auto --auto-correct` skips `corrector.py` entirely, but `packager.py`'s `handle_llm_failure()` (when rules/prompt generation exhausts its retries) still falls back to an `input()` prompt regardless of these flags — under heavy LLM rate-limiting this can still block on stdin. Known gap, not yet fixed.
+*`--auto --auto-correct` makes `pack` fully non-interactive: `packager.py`'s `handle_llm_failure()` and its checkpoint-resume prompt both take an `interactive` flag now (threaded from `--auto-correct`) and skip straight to their non-interactive default — checkpoint-and-exit, and always-resume, respectively — instead of calling `input()` against a closed stdin.
 
 Tests (`tests/`, pytest via `pytest.ini` which puts `src/` on `pythonpath`):
 ```
 pip install -r requirement-dev.txt   # adds pytest on top of requirement.txt
 pytest
 ```
-Covers the deterministic, non-LLM logic only — compressors, extractor, `file/collector.py`'s ignore/binary filtering, `file/relationship.py`'s graph ops, `edits.py`'s pure setters, and `tokenizer.py`'s counting. Nothing calls Gemini or needs `GEMINI_API_KEY`. `testfiles/` is separate — sample input for manual, ad-hoc CLI runs, not part of the test suite.
+Covers the deterministic, non-LLM logic only — compressors, extractor, `file/collector.py`'s ignore/binary filtering, `file/relationship.py`'s graph ops, `edits.py`'s pure setters, `search.py`, and `tokenizer.py`'s counting, plus `packager.py`'s non-interactive failure handling (`handle_llm_failure`/`_resume_checkpoint_choice` with `interactive=False`, monkeypatching `input` to assert it's never called). Nothing calls Gemini or needs `GEMINI_API_KEY`. `testfiles/` is separate — sample input for manual, ad-hoc CLI runs, not part of the test suite.
 
 ## Architecture
 
@@ -52,10 +52,12 @@ Covers the deterministic, non-LLM logic only — compressors, extractor, `file/c
 2. **`extract/code/*`** + **`extract/text/*`** — Tree-sitter signature/dependency/API extraction and body-stripping compression for code; regex-based compression for JSON/Markdown/plain text. Detail: `src/extract/CLAUDE.md`.
 3. **`tokenizer.py`** — counts tokens per model (`tiktoken`). `analyze_tokens_with_compression` (the standalone `tokens` command) measures original vs. compressed body only; `analyze_tokens_with_payload` (used by `pack`) measures original vs. just the per-file `summary` — the only per-file field that actually ships in the saved `aif.json`.
 4. **`llm.py`** — Gemini REST calls (`gemini-flash-latest`, via `requests`, not the SDK) for per-file summaries, coding-rule inference, and the project-level AI guide. `LLMProvider` (a `typing.Protocol`) is the seam for adding another model — implement `generate(prompt, retry) -> str` and register it in `PROVIDERS`. Retries on HTTP 429/503 with backoff.
-5. **`packager.py`** (`pack()`) — orchestrates 1–4, and owns **checkpointing**: `handle_llm_failure()` lets a failing LLM call be retried, answered manually, or checkpointed to `checkpoint/<project_name>.json` for the next `pack` run on the same path to auto-detect and resume.
+5. **`packager.py`** (`pack()`) — orchestrates 1–4, and owns **checkpointing**: `handle_llm_failure()` lets a failing LLM call be retried, answered manually, or checkpointed to `checkpoint/<project_name>.json` for the next `pack` run on the same path to auto-detect and resume. `pack(..., interactive=False)` (what `--auto-correct` sets) skips every prompt this function and the checkpoint-resume check could otherwise raise — both default to their safe non-interactive behavior (checkpoint-and-exit; always-resume) instead of calling `input()`.
 6. **`edits.py`** + **`file/relationship.py`** — the pure, I/O-free editing API (no `input()`/`print()`): field setters, `finalize_aif()` (builds `relationships`, prunes now-redundant `signatures`/`dependencies`/`api`), and the dependency-graph operations (`build_tree`/`move_file`/`has_cycle`). This is the seam a future MCP server or GUI backend would call directly with structured input instead of parsed terminal strings. Detail (especially `has_cycle`'s traversal direction — easy to get backwards): `src/file/CLAUDE.md`.
 7. **`corrector.py`** — the thin interactive CLI wrapper around 6: walks the user through project name/guide/rules/summaries/reparenting, calling the matching pure function for each accepted change. `--auto-correct` skips this module entirely and calls `edits.finalize_aif()` directly.
 8. **`packager.py`** (`save_aif()`) — pulls `compressed` out of each file entry into a sibling `<name>.detail.json`, so the saved `aif.json` only ever carries `summary` per file (files with little to strip, like README/config/lang files, would otherwise cost more tokens shipped than they save).
+
+**`search.py`** sits outside the `pack` sequence — pure query functions over an already-collected file set or an already-generated `detail.json`, built as MCP prep (see `ziplex-roadmap` memory: benchmarked against repomix's `grep_repomix_output`/`read_repomix_output` MCP tools before writing any MCP code). `search_files()` regex-searches original file content, not `compressed` — a match inside a body-stripped function would otherwise be invisible. `read_detail_range()` slices a `detail.json` entry's `compressed` text by 1-based line range instead of returning it whole. Exposed today via the `search`/`detail` CLI subcommands; a future MCP server wraps these same functions directly rather than reimplementing them.
 
 The final `aif.json` shape: `{ project: {name, prompt}, rules: [...], tokens: {...}, files: {name: {summary}}, relationships: {...} }`, with a sibling `<name>.detail.json` shaped `{ file-name: {compressed}, ... }` (same file-name keys as `files`, flat — not nested under a `files` key).
 

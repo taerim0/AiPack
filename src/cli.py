@@ -13,6 +13,7 @@ from packager import pack, save_aif
 from corrector import correct_aif
 from edits import finalize_aif
 from file.relationship import build_tree, print_tree as print_dependency_tree
+from search import search_files, read_detail_range
 
 
 def main():
@@ -54,6 +55,18 @@ def main():
 
     tr = sub.add_parser("tree", help="의존성 트리 출력")
     tr.add_argument("path", help="프로젝트 폴더 경로")
+
+    se = sub.add_parser("search", help="프로젝트 전체 검색 (정규식)")
+    se.add_argument("path", help="프로젝트 폴더 경로")
+    se.add_argument("pattern", help="검색할 정규식 패턴")
+    se.add_argument("--context", "-C", type=int, default=0, help="매치 앞뒤로 보여줄 줄 수")
+    se.add_argument("--ignore-case", "-i", action="store_true", help="대소문자 무시")
+
+    de = sub.add_parser("detail", help="detail.json에서 파일 일부만 읽기")
+    de.add_argument("detail_path", help="<name>.detail.json 경로")
+    de.add_argument("file", help="detail.json 안의 파일 키")
+    de.add_argument("--start", type=int, default=None, help="시작 줄 번호 (1-based)")
+    de.add_argument("--end", type=int, default=None, help="끝 줄 번호 (1-based, 포함)")
 
 
     args = parser.parse_args()
@@ -186,7 +199,9 @@ def main():
         print(f"  {prompt_data['prompt']}")
 
     elif args.command == "pack":
-        aif = pack(args.path, auto=args.auto)
+        # --auto-correct also means no terminal to prompt if an LLM call
+        # keeps failing inside pack() itself (see handle_llm_failure).
+        aif = pack(args.path, auto=args.auto, interactive=not args.auto_correct)
         if aif:
             if args.auto_correct:
                 aif = finalize_aif(aif)  # skip interactive review, still build relationships
@@ -230,6 +245,41 @@ def main():
 
         tree = build_tree(files_data)
         print_dependency_tree(tree)
+
+    elif args.command == "search":
+        files = collect_files(args.path)
+        scan_result = scan_files(files)
+        safe_files = scan_result["safe"]
+
+        try:
+            matches = search_files(
+                safe_files, args.path, args.pattern,
+                context_lines=args.context, ignore_case=args.ignore_case
+            )
+        except ValueError as e:
+            print(f"⚠️  {e}")
+            return
+
+        if not matches:
+            print("검색 결과 없음")
+        for m in matches:
+            print(f"\n{m.file}:{m.line_number}")
+            for line in m.context_before:
+                print(f"    {line}")
+            print(f"  → {m.line}")
+            for line in m.context_after:
+                print(f"    {line}")
+
+    elif args.command == "detail":
+        with open(args.detail_path, "r", encoding="utf-8") as f:
+            detail = json.load(f)
+
+        entry = detail.get(args.file)
+        if entry is None:
+            print(f"⚠️  '{args.file}'는 {args.detail_path}에 없습니다")
+            return
+
+        print(read_detail_range(entry.get("compressed", ""), args.start, args.end))
 
 if __name__ == "__main__":
     main()

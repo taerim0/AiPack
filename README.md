@@ -76,6 +76,8 @@ python src/cli.py pack ./your-project/ -o output/out.json
 | `collect <path>` | File collection + security scan only |
 | `tokens <path>` | Token count, before/after compression |
 | `tree <path>` | Dependency tree only |
+| `search <path> <pattern>` | Regex search across all safe files (`--context N`, `--ignore-case`) |
+| `detail <name>.detail.json <file-key>` | Partial read of one file's compressed body (`--start`/`--end`) |
 | `select <path>` | Interactive file selection only |
 | `analyze <path>` | LLM analysis only |
 | `signatures \| dependencies \| api \| compress \| debug <file>` | Run one extraction step on a single file |

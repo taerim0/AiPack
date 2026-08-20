@@ -76,6 +76,8 @@ python src/cli.py pack ./your-project/ -o output/out.json
 | `collect <path>` | 파일 수집 + 보안 스캔만 |
 | `tokens <path>` | 압축 전/후 토큰 수 |
 | `tree <path>` | 의존성 트리만 |
+| `search <path> <pattern>` | 안전한 파일 전체에서 정규식 검색 (`--context N`, `--ignore-case`) |
+| `detail <name>.detail.json <file-key>` | 파일 하나의 압축 본문을 부분만 읽기 (`--start`/`--end`) |
 | `select <path>` | 대화형 파일 선택만 |
 | `analyze <path>` | LLM 분석만 |
 | `signatures \| dependencies \| api \| compress \| debug <file>` | 파일 하나에 대해 추출 단계 하나만 실행 |

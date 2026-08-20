@@ -2,6 +2,10 @@
 
 Scoped notes for `file/collector.py`, `file/scanner.py`, `file/selector.py`, `file/relationship.py`, `file/textutil.py`. See the root `CLAUDE.md` for how these fit into the overall `pack` pipeline.
 
+## textutil.py
+
+Two shared low-level helpers everything else in the pipeline builds on: `read_text()` (safe UTF-8 read, `None` on anything that isn't decodable text) and `relative_key(file_path, root)` (a file's path relative to `root`, as a stable dict key — falls back to the bare filename if `file_path` isn't under `root`). `relative_key` used to be a private `_rel_key()` duplicated inside `packager.py`; it's here now because `search.py` (outside `file/`) needed the same logic for its search results, and `packager.py` imports it back as `relative_key as _rel_key` rather than keeping its own copy.
+
 ## collector.py
 
 `collect_files(root_path)` walks the tree and excludes two ways:
