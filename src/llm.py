@@ -76,10 +76,45 @@ class GeminiProvider:
         return "{}"
 
 
+class MockProvider:
+    """Deterministic, network-free provider for fast local iteration and
+    integration tests -- a live worked example of the "implement generate()
+    and register it" seam GeminiProvider's docstring describes.
+
+    Every real analyze_* call in this file ends its prompt with a one-line
+    example of the JSON shape it wants (e.g. `{"summary": "..."}`); this
+    just pattern-matches on which field name shows up to hand back a fixed,
+    valid response of the right shape, so a full `pack()` run actually
+    completes end to end -- checkpointing, parallel summaries, rules/prompt
+    generation, token counting -- without ever making a network call or
+    waiting out a retry/backoff loop. Content is fixed and not meant to be
+    realistic; this validates that the pipeline is wired together correctly,
+    not that any particular project's summaries read well. See CLAUDE.md /
+    tests/test_pack_integration.py for how to select it.
+    """
+
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        if '"rules"' in prompt:
+            return '{"rules": ["mock rule: methods use camelCase"]}'
+        if '"relationships"' in prompt:
+            return '{"relationships": {}}'
+        if '"prompt"' in prompt:
+            return '{"prompt": "Mock AI guide for local testing."}'
+        # analyze_file_summary and analyze_text_summary both want this shape
+        return '{"summary": "Mock summary for local testing."}'
+
+
 # Registry of supported providers. To add a new LLM, add a class here and let
-# LLM_PROVIDER select it (e.g. PROVIDERS["claude"] = ClaudeProvider).
+# LLM_PROVIDER select it (e.g. PROVIDERS["claude"] = ClaudeProvider). Select
+# a non-default provider by setting LLM_PROVIDER before the process starts
+# (it's read once, at import time, into the module-level _provider below) --
+# e.g. `LLM_PROVIDER=mock python src/cli.py pack ...` for an instant,
+# network-free run. Tests instead monkeypatch the _provider instance
+# directly, since by the time a test runs, this module may already have been
+# imported (and _provider constructed) by an earlier test file.
 PROVIDERS: dict[str, type[LLMProvider]] = {
     "gemini": GeminiProvider,
+    "mock": MockProvider,
 }
 
 _provider: LLMProvider = PROVIDERS[os.getenv("LLM_PROVIDER", "gemini")]()

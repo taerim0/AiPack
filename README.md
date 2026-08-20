@@ -91,7 +91,9 @@ pip install -r requirement-dev.txt   # adds pytest on top of requirement.txt
 pytest
 ```
 
-Covers the deterministic core — compressors, the Tree-sitter extractor, the collector's ignore/binary-file filtering, the dependency-graph operations (`build_tree`/`has_cycle`/`move_file`), and the pure `aif`-editing API — without touching the network or needing `GEMINI_API_KEY`.
+Covers the deterministic core — compressors, the Tree-sitter extractor, the collector's ignore/binary-file filtering, the dependency-graph operations (`build_tree`/`has_cycle`/`move_file`), and the pure `aif`-editing API — plus a full `pack()` run against a network-free `MockProvider` instead of Gemini, exercising checkpointing, parallel summaries, and token counting end to end without the cost or latency of a real LLM call.
+
+Want to smoke-test `pack` against a real project without waiting on Gemini? `LLM_PROVIDER=mock python src/cli.py pack <project> --auto --auto-correct` runs the whole pipeline network-free in under a second.
 
 ## Output format
 
