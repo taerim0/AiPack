@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from file.collector import collect_files
 from file.scanner import scan_files
 from file.selector import select_files
+from file.textutil import relative_key as _rel_key
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api
 from extract.code.compressor import compress_file
 from tokenizer import analyze_tokens_with_payload
@@ -43,22 +44,25 @@ def delete_checkpoint(root_path: str) -> None:
         path.unlink()
 
 
-def _rel_key(file_path: str, root: Path) -> str:
-    """Uses the file's path relative to the project root as its aif.json/checkpoint key.
-
-    Using just the basename would collide for same-named files in different
-    folders (e.g. multiple modules each with their own init.py, config.py),
-    silently letting the last one overwrite the earlier ones. A relative-path
-    key avoids that.
+def handle_llm_failure(
+    name: str, field: str, current_aif: dict, root_path: str, interactive: bool = True
+) -> str | None:
+    """On an LLM call that's exhausted its own internal retries: ask the user
+    what to do (retry / type a value / checkpoint and exit), or -- when
+    interactive=False, e.g. under `pack --auto-correct` -- skip the prompt
+    entirely and behave as if "checkpoint and exit" was chosen. That keeps a
+    non-interactive `pack` call from blocking on input() forever (or crashing
+    with EOFError, which is what used to happen here under a closed stdin);
+    the caller gets a clean {} back and the checkpoint is there to resume
+    from once the LLM is behaving again.
     """
-    try:
-        return Path(file_path).relative_to(root).as_posix()
-    except ValueError:
-        return Path(file_path).name
-
-
-def handle_llm_failure(name: str, field: str, current_aif: dict, root_path: str) -> str | None:
     print(f"\n  ⚠️  {name} {field} 생성 실패")
+
+    if not interactive:
+        print("  💾 비대화형 모드 → 체크포인트 저장 후 중단")
+        save_checkpoint(root_path, current_aif)
+        return "EXIT"
+
     print("  [1] 재시도")
     print("  [2] 직접 입력")
     print("  [3] 저장 후 종료")
@@ -73,6 +77,22 @@ def handle_llm_failure(name: str, field: str, current_aif: dict, root_path: str)
         return "EXIT"
 
     return None
+
+
+def _resume_checkpoint_choice(interactive: bool) -> bool:
+    """Returns True to resume from a found checkpoint, False to discard it and
+    start over. Non-interactive callers always resume -- silently discarding
+    prior progress is a worse default than continuing it, and there's no
+    terminal to ask.
+    """
+    if not interactive:
+        return True
+
+    print(f"\n  📂 체크포인트 발견")
+    print("  [1] 이어서 진행")
+    print("  [2] 처음부터 시작")
+    choice = input("  선택: ").strip()
+    return choice != "2"
 
 
 def _request_summary(file_path: str, data: dict) -> str:
@@ -111,19 +131,23 @@ def _current_aif_snapshot(root: Path, files_data: dict, rules: list = None, prom
     }
 
 
-def pack(root_path: str, auto: bool = False) -> dict:
+def pack(root_path: str, auto: bool = False, interactive: bool = True) -> dict:
+    """auto controls file selection (skip the interactive picker, include all
+    safe files); interactive controls whether a failing LLM call can prompt
+    for input at all. The two are independent: `--auto` alone still lets
+    handle_llm_failure() ask what to do on a repeated failure, while
+    interactive=False makes that automatic (checkpoint + return {}) even with
+    file selection left interactive. `cli.py`'s `--auto-correct` sets both
+    this and whether corrector.py's interactive review runs afterward, since
+    both boil down to the same question: is there a terminal to prompt?
+    """
     root = Path(root_path)
 
     # auto-detect a checkpoint
     checkpoint = load_checkpoint(root_path)
-    if checkpoint:
-        print(f"\n  📂 체크포인트 발견")
-        print("  [1] 이어서 진행")
-        print("  [2] 처음부터 시작")
-        choice = input("  선택: ").strip()
-        if choice == "2":
-            checkpoint = None
-            delete_checkpoint(root_path)
+    if checkpoint and not _resume_checkpoint_choice(interactive):
+        checkpoint = None
+        delete_checkpoint(root_path)
 
     # restore from checkpoint
     restored_rules = checkpoint.get("rules", []) if checkpoint else []
@@ -224,7 +248,8 @@ def pack(root_path: str, auto: bool = False) -> dict:
                 result = handle_llm_failure(
                     "rules", "코딩 룰",
                     _current_aif_snapshot(root, files_data),
-                    root_path
+                    root_path,
+                    interactive=interactive,
                 )
                 if result == "EXIT":
                     return {}
@@ -255,7 +280,8 @@ def pack(root_path: str, auto: bool = False) -> dict:
                 result = handle_llm_failure(
                     "prompt", "AI 가이드",
                     _current_aif_snapshot(root, files_data, rules),
-                    root_path
+                    root_path,
+                    interactive=interactive,
                 )
                 if result == "EXIT":
                     return {}
