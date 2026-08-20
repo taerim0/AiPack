@@ -142,8 +142,8 @@ claude mcp add ziplex -- python src/mcp_server.py      # Claude Code에 등록 (
 
 | 툴 | 하는 일 |
 |---|---|
-| `get_overview(aif_path)` | 프로젝트 가이드, 코딩 룰, 토큰 통계 — 가장 먼저 호출하면 됩니다 |
-| `list_files(aif_path)` | 모든 파일을 요약 + 신뢰도 점수와 함께 매핑 |
+| `get_overview(aif_path, project_path?)` | 프로젝트 가이드, 코딩 룰, 토큰 통계 — 가장 먼저 호출하면 됩니다 |
+| `list_files(aif_path, project_path?)` | 모든 파일을 요약 + 신뢰도 점수와 함께 매핑 |
 | `get_dependents(aif_path, file)` | `file`을 직접 의존하는 파일들 |
 | `get_blast_radius(aif_path, file)` | `file`이 바뀌면 직간접적으로 영향받는 모든 파일 |
 | `get_detail(aif_path, file, start_line?, end_line?)` | 파일의 압축 소스, 전체 또는 줄 범위로 |
@@ -152,7 +152,15 @@ claude mcp add ziplex -- python src/mcp_server.py      # Claude Code에 등록 (
 
 의도적으로 읽기 전용입니다 — 모든 툴은 사람이 `correct_aif()`로 이미 검토한 `aif.json`/`detail.json`을 그대로 서빙할 뿐, 어떤 툴도 프로젝트를 알아서 다시 패킹하거나 보정하지 않습니다. 그건 Ziplex의 핵심인 human-in-the-loop 단계를 건너뛰는 거니까요. `get_dependents`/`get_blast_radius`도 `pack`이 만드는 것과 같은, 사람이 보정한 `relationships` 그래프 위에서 동작합니다 — 방금 추출한 검토 안 된 그래프가 아니라요.
 
-`aif.json`/`detail.json`은 마지막 `pack` 실행 시점의 스냅샷이라, 활발히 바뀌는 프로젝트에서는 실제 상태와 어긋날 수 있습니다. `search_project`(항상 파일을 직접 읽음)를 제외한 나머지 툴은 전부 이 스냅샷을 그대로 믿습니다 — 오래됐을까 걱정되면 `check_freshness`부터 호출하세요. 뭘 고쳐주진 않지만, 나머지를 믿기 전에 다시 `pack`할 필요가 있는지는 알려줍니다.
+`aif.json`/`detail.json`은 마지막 `pack` 실행 시점의 스냅샷이라, 활발히 바뀌는 프로젝트에서는 실제 상태와 어긋날 수 있습니다. `search_project`(항상 파일을 직접 읽음)를 제외한 나머지 툴은 전부 이 스냅샷을 그대로 믿습니다 — 오래됐을까 걱정되면 `check_freshness`부터 호출하거나, `get_overview`/`list_files`에 `project_path`를 함께 넘겨서 알아서 확인하게 하세요: 스냅샷이 오래됐으면 결과에 `_stale` 필드가 추가로 붙어서 옵니다. 뭘 고쳐주진 않지만, 나머지를 믿기 전에 다시 `pack`할 필요가 있는지는 알려줍니다.
+
+## 팀에서 사용하기
+
+Ziplex는 한 사람의 로컬 스냅샷을 패킹합니다 — 공유 서버나 실시간 동기화는 없습니다. 그렇다고 팀에서 못 쓴다는 건 아닙니다: `aif.json`/`detail.json`/`cache.json`은 그냥 파일이라, 다른 자동 생성 산출물처럼 프로젝트 저장소에 커밋해서 팀이 하나의 기준선을 공유할 수 있습니다.
+
+- 의미 있는 변경 뒤에 `pack`을 돌린 사람이 코드 변경과 함께 새로 생성된 결과물을 커밋합니다.
+- 다른 사람들의 `aif.json`은 마지막으로 커밋된 시점만큼만 최신입니다 — `check_freshness`(또는 위에서 설명한, `project_path`를 넘긴 `get_overview`/`list_files`)로 자기 작업 사본이 커밋된 것과 얼마나 어긋났는지 다시 `pack`하지 않고도 확인할 수 있습니다.
+- 이건 실시간 동기화가 아니라 권장 컨벤션입니다 — Ziplex가 강제하거나 조율하지 않습니다. 병합/충돌 해결도 없고, 두 사람이 각자 커밋하기 전에 따로 `pack`을 돌리면 "누구 결과가 맞는지"도 정해져 있지 않습니다.
 
 ## 기술 스택
 

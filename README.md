@@ -143,8 +143,8 @@ claude mcp add ziplex -- python src/mcp_server.py      # register with Claude Co
 
 | Tool | What it does |
 |---|---|
-| `get_overview(aif_path)` | Project guide, coding rules, token stats — call this first |
-| `list_files(aif_path)` | Every file mapped to its summary + confidence score |
+| `get_overview(aif_path, project_path?)` | Project guide, coding rules, token stats — call this first |
+| `list_files(aif_path, project_path?)` | Every file mapped to its summary + confidence score |
 | `get_dependents(aif_path, file)` | Files that directly depend on `file` |
 | `get_blast_radius(aif_path, file)` | Every file transitively affected by a change to `file` |
 | `get_detail(aif_path, file, start_line?, end_line?)` | A file's compressed source, in full or by line range |
@@ -153,7 +153,15 @@ claude mcp add ziplex -- python src/mcp_server.py      # register with Claude Co
 
 Read-only and deliberately so: every tool serves an `aif.json`/`detail.json` a human already reviewed via `correct_aif()` — none of them re-pack or re-correct a project on their own, since that would skip the human-in-the-loop step that's the point of Ziplex. `get_dependents`/`get_blast_radius` run on the same human-corrected `relationships` graph `pack` builds — not a fresh, uncorrected guess.
 
-`aif.json`/`detail.json` are snapshots from the last `pack` run, so they can drift from an actively-changing project. Every tool above except `search_project` (which always reads files live) trusts that snapshot — call `check_freshness` first if you suspect it's gone stale; it won't fix anything, but it tells you whether a re-`pack` is warranted before you trust the rest.
+`aif.json`/`detail.json` are snapshots from the last `pack` run, so they can drift from an actively-changing project. Every tool above except `search_project` (which always reads files live) trusts that snapshot — call `check_freshness` first if you suspect it's gone stale, or just pass `project_path` to `get_overview`/`list_files` and let them check for you: a stale pack gets an extra `_stale` field in the result instead of silently being trusted. It won't fix anything, but it tells you whether a re-`pack` is warranted before you trust the rest.
+
+## Team use
+
+Ziplex packs one person's local snapshot — there's no shared server or live sync. That doesn't rule out team use, though: `aif.json`/`detail.json`/`cache.json` are just files, so a team can commit them to the project's own repo the same way any other generated-but-versioned artifact works.
+
+- Whoever runs `pack` after a meaningful change commits the refreshed output alongside their code change.
+- Everyone else's copy is only as current as the last commit that touched it — `check_freshness` (or `get_overview`/`list_files` with `project_path` passed, see above) tells them whether their working copy has drifted from what's committed, without re-`pack`ing just to find out.
+- This is a convention, not a feature Ziplex enforces or coordinates: no merge/conflict resolution, and no defined "who wins" if two people repack independently before either commits.
 
 ## Tech stack
 
