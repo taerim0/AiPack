@@ -54,24 +54,67 @@ def _cache_path(aif_path: str) -> Path:
     return p.with_name(f"{p.stem}.cache.json")
 
 
+def _stale_warning(project_path: str | None, aif_path: str) -> dict | None:
+    """None when project_path isn't given, its cache.json is missing/corrupt,
+    or the pack is still fresh; otherwise a compact drift summary to attach
+    to a tool's result under "_stale".
+
+    This exists so an agent that always passes project_path can't silently
+    keep working off a drifted snapshot without at least being told --
+    without it, that requires remembering to call check_freshness as a
+    separate step first, which is exactly the kind of step an agent can
+    forget. Deliberately wired into get_overview/list_files only (the two
+    "orientation" tools a session typically calls first), not into every
+    tool -- get_detail/get_dependents/get_blast_radius return a bare str/
+    list[str] with no room for a sibling field, and re-hashing the whole
+    project on every fine-grained follow-up call would add real repeated IO
+    for no new information once the first check already surfaced it.
+    """
+    if project_path is None:
+        return None
+    try:
+        manifest = _load_json(str(_cache_path(aif_path)))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    files = collect_files(project_path)
+    safe_files = scan_files(files)["safe"]
+    report = _check_freshness(safe_files, project_path, manifest)
+    if not report.is_stale:
+        return None
+    return {"is_stale": True, "changed": report.changed, "added": report.added, "removed": report.removed}
+
+
 @mcp.tool()
-def get_overview(aif_path: str) -> dict:
+def get_overview(aif_path: str, project_path: str | None = None) -> dict:
     """Project name, AI-facing guide, inferred coding rules, and token stats
     for an already-packed project. Call this first -- it's the cheapest,
     always-affordable view of a project, and enough context for many
     questions on its own without fetching any file's detail.
+
+    Pass project_path too (the actual project directory aif_path was packed
+    from) and this also runs a free freshness check (a hash comparison, no
+    LLM calls, same as the standalone check_freshness tool) -- if the pack
+    has drifted from disk, the result carries an extra "_stale" field
+    listing what changed/was added/was removed, so a re-pack is worth
+    considering before trusting the rest. Omitting project_path just skips
+    that check; nothing else about the result changes.
     """
     aif = _load_json(aif_path)
-    return {
+    result = {
         "project": aif.get("project", {}),
         "rules": aif.get("rules", []),
         "tokens": aif.get("tokens", {}),
         "file_count": len(aif.get("files", {})),
     }
+    warning = _stale_warning(project_path, aif_path)
+    if warning:
+        result["_stale"] = warning
+    return result
 
 
 @mcp.tool()
-def list_files(aif_path: str) -> dict:
+def list_files(aif_path: str, project_path: str | None = None) -> dict:
     """Every file in the project mapped to its one-line summary and a
     heuristic confidence score (0.0-1.0, see src/confidence.py) for how well
     that summary's wording actually matches the file's extracted signatures
@@ -80,12 +123,19 @@ def list_files(aif_path: str) -> dict:
     Use this to decide which file (if any) is worth that closer look --
     summaries are already loaded here at effectively no cost; full source
     is not.
+
+    Pass project_path too for the same free "_stale" freshness check
+    get_overview() does -- see its docstring for details.
     """
     aif = _load_json(aif_path)
-    return {
+    result = {
         name: {"summary": data.get("summary", ""), "confidence": data.get("confidence", 1.0)}
         for name, data in aif.get("files", {}).items()
     }
+    warning = _stale_warning(project_path, aif_path)
+    if warning:
+        result["_stale"] = warning
+    return result
 
 
 @mcp.tool()

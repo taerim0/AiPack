@@ -90,6 +90,69 @@ def test_list_files_via_call_tool(tmp_path):
     }
 
 
+def test_get_overview_omits_stale_field_when_project_path_not_given(tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    result = _call("get_overview", {"aif_path": aif_path})
+    assert "_stale" not in _json_result(result)
+
+
+def test_get_overview_attaches_stale_warning_when_project_changed(tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "sample.cache.json").write_text(
+        json.dumps(freshness.build_manifest([str(project / "a.py")], str(project))),
+        encoding="utf-8",
+    )
+
+    (project / "a.py").write_text("x = 2\n", encoding="utf-8")  # edit after the cache was taken
+
+    result = _call("get_overview", {"aif_path": aif_path, "project_path": str(project)})
+    data = _json_result(result)
+    assert data["_stale"] == {"is_stale": True, "changed": ["a.py"], "added": [], "removed": []}
+
+
+def test_get_overview_no_stale_field_when_project_still_matches(tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "sample.cache.json").write_text(
+        json.dumps(freshness.build_manifest([str(project / "a.py")], str(project))),
+        encoding="utf-8",
+    )
+
+    result = _call("get_overview", {"aif_path": aif_path, "project_path": str(project)})
+    assert "_stale" not in _json_result(result)
+
+
+def test_get_overview_stale_check_ignores_a_missing_cache_json(tmp_path):
+    # no sample.cache.json written at all -- treated the same as "can't
+    # check", not an error
+    aif_path = _write_sample_aif(tmp_path)
+    result = _call("get_overview", {"aif_path": aif_path, "project_path": str(tmp_path)})
+    assert "_stale" not in _json_result(result)
+
+
+def test_list_files_attaches_stale_warning_when_project_changed(tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "sample.cache.json").write_text(
+        json.dumps(freshness.build_manifest([str(project / "a.py")], str(project))),
+        encoding="utf-8",
+    )
+
+    (project / "a.py").write_text("x = 2\n", encoding="utf-8")
+
+    result = _call("list_files", {"aif_path": aif_path, "project_path": str(project)})
+    data = _json_result(result)
+    assert data["_stale"]["is_stale"] is True
+    assert data["a.py"] == {"summary": "does a thing", "confidence": 1.0}  # real files untouched
+
+
 def test_get_dependents_via_call_tool(tmp_path):
     aif_path = _write_sample_aif(tmp_path)
     result = _call("get_dependents", {"aif_path": aif_path, "file": "a.py"})
