@@ -312,6 +312,29 @@ def get_review(job_id: str) -> dict | None:
         return _build_review(job["aif"])
 
 
+def has_reviewing_job() -> bool:
+    """True if any job is currently paused in "reviewing" -- backs
+    gui_server.py's native-window close guard. app.js's own beforeunload
+    handler (see showReviewState()'s comment) only fires on an in-page
+    reload/navigation; clicking the OS window's close button destroys the
+    webview directly without ever running the page's unload event, so
+    nothing browser-side catches a close there. This Python-side check is
+    what closes that gap, by asking pack_service directly rather than
+    trying to synchronize with page-side JS state from the close handler.
+
+    Locking follows the same discipline _lookup_job()'s docstring
+    describes: never hold `_jobs_lock` while acquiring a job's own lock, so
+    this can't deadlock against a concurrent request touching one job.
+    """
+    with _jobs_lock:
+        jobs = list(_jobs.values())
+    for job in jobs:
+        with job["lock"]:
+            if job["state"] == "reviewing":
+                return True
+    return False
+
+
 def _require_reviewing(job: dict) -> None:
     """Must be called with job["lock"] already held. Raises ValueError if
     the job isn't currently paused in "reviewing" with a live `aif` --

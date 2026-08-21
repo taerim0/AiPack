@@ -189,6 +189,28 @@ def test_cancel_job_discards_a_reviewing_job(tmp_path, monkeypatch):
     assert pack_service.cancel_job("no-such-job") is False
 
 
+def test_has_reviewing_job_reflects_job_state(tmp_path, monkeypatch):
+    # Isolates this test from every other test's jobs, which otherwise
+    # accumulate in the module-level `_jobs` dict for the life of the test
+    # process (several other tests here deliberately leave a job sitting in
+    # "reviewing") -- without this, asserting the False case would be order-
+    # dependent on what ran before it.
+    monkeypatch.setattr(pack_service, "_jobs", {})
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    assert pack_service.has_reviewing_job() is False
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    job_id = pack_service.start_pack_job(str(project), selected_files=["main.py"])
+    _wait(job_id)
+    assert pack_service.has_reviewing_job() is True
+
+    assert pack_service.cancel_job(job_id) is True
+    assert pack_service.has_reviewing_job() is False
+
+
 def test_review_includes_a_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")

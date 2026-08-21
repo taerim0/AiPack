@@ -5,6 +5,8 @@
 
 const LS_AIF = "ziplex.aif_path";
 const LS_PROJECT = "ziplex.project_path";
+const LS_RECENT = "ziplex.recent"; // JSON array of {aif, project, openedAt}, most recent first
+const RECENT_MAX = 8;
 
 const app = document.getElementById("app");
 const nav = document.getElementById("nav");
@@ -12,6 +14,51 @@ const staleBadge = document.getElementById("stale-badge");
 
 function getAif() { return localStorage.getItem(LS_AIF) || ""; }
 function getProject() { return localStorage.getItem(LS_PROJECT) || ""; }
+
+// "최근 프로젝트" on the landing page (Nielsen's "recognition rather than
+// recall" -- a returning user shouldn't have to re-type or re-browse-to a
+// path they've already opened once). Keyed by aif_path since that's the
+// one required field; project_path travels alongside it for the freshness
+// check but isn't itself unique. Best-effort: a private window or a
+// browser with site data blocked can throw on either read or write here,
+// and an empty/broken list just means "no recents shown", never a crash.
+function getRecent() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_RECENT) || "[]");
+    return Array.isArray(raw) ? raw : [];
+  } catch { return []; }
+}
+
+function pushRecent(aif, project) {
+  if (!aif) return;
+  try {
+    const list = getRecent().filter(r => r.aif !== aif);
+    list.unshift({ aif, project: project || "", openedAt: Date.now() });
+    localStorage.setItem(LS_RECENT, JSON.stringify(list.slice(0, RECENT_MAX)));
+  } catch { /* storage unavailable -- recent list just stays empty next time */ }
+}
+
+function removeRecent(aif) {
+  try {
+    localStorage.setItem(LS_RECENT, JSON.stringify(getRecent().filter(r => r.aif !== aif)));
+  } catch { /* best-effort, see pushRecent */ }
+}
+
+function openProject(aif, project) {
+  localStorage.setItem(LS_AIF, aif);
+  localStorage.setItem(LS_PROJECT, project || "");
+  pushRecent(aif, project);
+  location.hash = "#/overview";
+}
+
+function relativeTime(ms) {
+  const mins = Math.round((Date.now() - ms) / 60000);
+  if (mins < 1) return "방금";
+  if (mins < 60) return `${mins}분 전`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  return `${Math.round(hours / 24)}일 전`;
+}
 
 async function api(path, params = {}) {
   const url = new URL(path, location.origin);
@@ -62,25 +109,58 @@ function showError(err) {
   app.appendChild(el("div", { class: "error", text: String(err.message || err) }));
 }
 
+// Visibility of system status (Nielsen heuristic #1): fetches to /api/* are
+// local but not instant, and an empty <main> while one is in flight reads
+// as "nothing happened" rather than "working on it". Callers clear this
+// themselves (another app.innerHTML = "") once real content is ready to
+// render -- same pattern renderSearch's inline "검색 중..." already used,
+// just factored out so every page-level fetch gets it, not just search.
+function showLoading() {
+  app.innerHTML = "";
+  app.appendChild(el("p", { class: "muted loading", text: "불러오는 중..." }));
+}
+
 // pywebview injects window.pywebview.api once the native window is created
 // with js_api=... (see gui_server.py's main()) -- absent in --no-window
 // mode (plain browser tab), where there's no bridge to a native dialog at
-// all, so the browse button just tells a human to type the path instead.
-function hasFolderPicker() {
-  return !!(window.pywebview && window.pywebview.api && window.pywebview.api.choose_folder);
+// all, so every browse button below just tells a human to type the path
+// instead when the bridge (or this specific method on it) isn't there.
+function hasApi(method) {
+  return !!(window.pywebview && window.pywebview.api && window.pywebview.api[method]);
 }
 
-function browseButton(targetInput) {
-  const btn = el("button", { class: "secondary", text: "📁 찾아보기" });
+// Shared by the folder/open-file/save-file pickers below -- each just picks
+// a different js_api method (see gui_server.py's _Api) and label/message.
+function pickerButton(targetInput, apiMethod, label, unavailableMessage) {
+  const btn = el("button", { class: "secondary", text: label });
   btn.addEventListener("click", async () => {
-    if (!hasFolderPicker()) {
-      alert("폴더 선택 대화상자는 기본 실행 모드(네이티브 창)에서만 사용할 수 있습니다. --no-window로 실행 중이면 경로를 직접 입력해주세요.");
+    if (!hasApi(apiMethod)) {
+      alert(unavailableMessage);
       return;
     }
-    const folder = await window.pywebview.api.choose_folder();
-    if (folder) targetInput.value = folder;
+    const picked = await window.pywebview.api[apiMethod]();
+    if (picked) targetInput.value = picked;
   });
   return btn;
+}
+
+const PICKER_UNAVAILABLE = "선택 대화상자는 기본 실행 모드(네이티브 창)에서만 사용할 수 있습니다. --no-window로 실행 중이면 경로를 직접 입력해주세요.";
+
+function browseButton(targetInput) {
+  return pickerButton(targetInput, "choose_folder", "📁 찾아보기", PICKER_UNAVAILABLE);
+}
+
+// aif.json 경로: an existing file to open, so this is an OPEN dialog
+// (see gui_server.py's choose_aif_file), filtered to .json.
+function browseAifButton(targetInput) {
+  return pickerButton(targetInput, "choose_aif_file", "📄 찾아보기", PICKER_UNAVAILABLE);
+}
+
+// 출력 경로: a file that doesn't necessarily exist yet -- pack's own
+// save_aif() will create it -- so this is a SAVE dialog, not OPEN
+// (see gui_server.py's choose_save_file).
+function browseSaveButton(targetInput) {
+  return pickerButton(targetInput, "choose_save_file", "📄 찾아보기", PICKER_UNAVAILABLE);
 }
 
 function confidenceLevel(conf) {
@@ -109,20 +189,18 @@ function renderLanding() {
   const aifInput = el("input", { type: "text", id: "aif-input", placeholder: "예: result/my-project.json", value: getAif() });
   const projInput = el("input", { type: "text", id: "proj-input", placeholder: "예: C:\\path\\to\\my-project (선택, 최신 여부 확인용)", value: getProject() });
 
-  const openCard = el("div", { class: "card" }, [
+  const openCard = el("div", { class: "card landing-intro" }, [
     el("h1", { text: "📦 Ziplex" }),
     el("p", { text: "이미 pack된 프로젝트를 둘러보고, 필요한 부분을 복사해 다른 AI 챗에 붙여넣으세요." }),
-    el("label", { text: "aif.json 경로" }), aifInput,
+    el("label", { text: "aif.json 경로" }),
+    el("div", { class: "input-row" }, [aifInput, browseAifButton(aifInput)]),
     el("label", { text: "프로젝트 폴더 경로 (선택)" }),
     el("div", { class: "input-row" }, [projInput, browseButton(projInput)]),
     el("div", { class: "copy-row" }, [
       el("button", { text: "열기", onclick: () => {
         const aif = aifInput.value.trim();
-        const proj = projInput.value.trim();
         if (!aif) { aifInput.focus(); return; }
-        localStorage.setItem(LS_AIF, aif);
-        localStorage.setItem(LS_PROJECT, proj);
-        location.hash = "#/overview";
+        openProject(aif, projInput.value.trim());
       } }),
     ]),
   ]);
@@ -213,7 +291,8 @@ function renderLanding() {
     el("p", { class: "muted", text: "파일을 선택해 LLM 요약을 생성한 뒤, 저장 전에 검토/수정할 수 있습니다 (CLI의 대화형 pack과 동일)." }),
     el("label", { text: "프로젝트 폴더 경로" }),
     el("div", { class: "input-row" }, [packProjInput, browseButton(packProjInput)]),
-    el("label", { text: "출력 경로 (선택)" }), packOutInput,
+    el("label", { text: "출력 경로 (선택)" }),
+    el("div", { class: "input-row" }, [packOutInput, browseSaveButton(packOutInput)]),
     el("label", { style: "display:flex;align-items:center;gap:6px;margin-top:14px" }, [
       noCacheInput,
       el("span", { text: "이전 pack 캐시 무시 (변경 없는 파일도 전체 재요약)" }),
@@ -224,7 +303,26 @@ function renderLanding() {
     packError,
   ]);
 
-  app.appendChild(el("div", { class: "landing" }, [openCard, packCard]));
+  const landingChildren = [openCard, packCard];
+  const recent = getRecent();
+  if (recent.length) {
+    const recentList = el("div", { class: "recent-list" }, recent.map(r => {
+      const row = el("div", { class: "recent-row" }, [
+        el("div", { class: "recent-main", onclick: () => openProject(r.aif, r.project) }, [
+          el("div", { class: "recent-aif", text: r.aif }),
+          el("div", { class: "recent-meta", text: `${r.project ? r.project + " · " : ""}${relativeTime(r.openedAt)}` }),
+        ]),
+        el("button", { class: "secondary recent-remove", text: "✕", onclick: (e) => {
+          e.stopPropagation();
+          removeRecent(r.aif);
+          row.remove();
+        } }),
+      ]);
+      return row;
+    }));
+    landingChildren.unshift(el("div", { class: "card recent-card" }, [el("h2", { text: "최근 프로젝트" }), recentList]));
+  }
+  app.appendChild(el("div", { class: "landing" }, landingChildren));
 
   // prefill from server-side --aif/--project if nothing saved locally yet
   if (!getAif()) {
@@ -235,24 +333,229 @@ function renderLanding() {
   }
 }
 
-// Flat per-file editor over a build_tree()-shaped dependency tree
-// ({file: {internal: [...], external: [...]}}). `dependencies` is a graph,
-// not a tree -- a file can legitimately be depended on by more than one
-// other file -- so this edits one edge (file -> target) at a time instead
-// of reparenting a whole nested subtree the way an earlier drag-and-drop
-// version did (that collapsed ALL of a shared file's references down to
-// wherever it got dropped, which is almost never what you want). onLink/
-// onUnlink(file, target) are called on each add/remove click; the caller is
-// expected to redraw via the returned .setTree() once the server confirms
-// the change (see /api/pack/link, /api/pack/unlink in showReviewState).
-function renderRelationshipEditor(tree, allFiles, onLink, onUnlink) {
-  const box = el("div", { class: "rel-box" });
+function svgEl(tag, attrs = {}, children = []) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "text") n.textContent = v;
+    else n.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) if (c) n.appendChild(c);
+  return n;
+}
+
+// Keeps the tail of a string rather than the front when it has to be cut --
+// last-resort truncation once shortLabels() below has already reduced a
+// relative path down to (usually) just its basename, for the rare case
+// where even that basename alone is too long for a node box.
+function truncateTail(s, max) {
+  return s.length <= max ? s : "…" + s.slice(-(max - 1));
+}
+
+// Reduces each of `names` (relative paths) to its basename for display --
+// "src/very/deep/path/Component.tsx" and "Component.tsx" both read as just
+// "Component.tsx" in a mini graph's fixed-width node boxes, since the
+// directory prefix was eating into the truncation budget and clipping the
+// actual filename (the identifying part) rather than the path (the noisy
+// part). Falls back to "parentDir/basename" only for names whose basename
+// collides with another name in this same `names` list -- disambiguation is
+// scoped to what's actually shown together in one graph, not the whole
+// project, so it only kicks in when it would otherwise be genuinely
+// ambiguous on screen. The full path is still always available via the
+// node's <title> hover tooltip regardless of which label wins here.
+function shortLabels(names) {
+  const counts = {};
+  for (const n of names) {
+    const base = n.split("/").pop();
+    counts[base] = (counts[base] || 0) + 1;
+  }
+  const labels = {};
+  for (const n of names) {
+    const parts = n.split("/");
+    const base = parts.pop();
+    labels[n] = counts[base] > 1 && parts.length ? `${parts[parts.length - 1]}/${base}` : base;
+  }
+  return labels;
+}
+
+// Small "ego graph" for one file: direct dependents on the left (arrows
+// pointing in) and direct dependencies on the right (arrows pointing out),
+// capped at REL_GRAPH_MAX_NEIGHBORS per side so a heavily-shared file (a
+// utils module with 50 dependents, say) can't blow up the SVG -- the text
+// lists below the graph already enumerate everything; this is a visual aid
+// for spotting the shape of a file's relationships at a glance, not the
+// source of truth. Clicking an internal neighbor node jumps the editor's
+// selection to it (via onSelect), so a human can walk the graph instead of
+// re-searching the file list for every hop.
+const REL_GRAPH_MAX_NEIGHBORS = 6;
+
+function renderMiniGraph(name, parents, children, onSelect) {
+  const shownParents = parents.slice(0, REL_GRAPH_MAX_NEIGHBORS);
+  const extraParents = parents.length - shownParents.length;
+  const shownChildren = children.slice(0, REL_GRAPH_MAX_NEIGHBORS);
+  const extraChildren = children.length - shownChildren.length;
+
+  const rows = Math.max(shownParents.length, shownChildren.length, 1);
+  const rowH = 26;
+  const height = rows * rowH + (extraParents || extraChildren ? 18 : 0) + 20;
+  const width = 480;
+  const midY = height / 2 - (extraParents || extraChildren ? 9 : 0);
+  const midX = width / 2;
+  const sideMargin = 8;
+
+  const labels = shortLabels([name, ...shownParents, ...shownChildren.map(c => c.name)]);
+
+  const centerLabel = truncateTail(labels[name], 26);
+  const centerW = Math.max(90, centerLabel.length * 6.4 + 24);
+
+  // Two markers, not one: an SVG marker's fill doesn't inherit from the
+  // line referencing it, so the accent-colored in/out edges and the muted
+  // dashed external edges each need their own arrowhead colored to match.
+  function arrowMarker(id, fill) {
+    return svgEl("marker", {
+      id, viewBox: "0 0 10 10", refX: "9", refY: "5",
+      markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse",
+    }, [svgEl("path", { d: "M0,0 L10,5 L0,10 z", style: `fill:${fill}` })]);
+  }
+
+  const svg = svgEl("svg", { class: "rel-graph", viewBox: `0 0 ${width} ${height}`, width: "100%", height: String(height) }, [
+    svgEl("defs", {}, [
+      arrowMarker("rel-arrow", "var(--accent)"),
+      arrowMarker("rel-arrow-muted", "var(--muted)"),
+    ]),
+  ]);
+
+  function sideNode(itemName, external, x, y, align) {
+    const label = truncateTail(labels[itemName], 20);
+    const w = Math.max(70, label.length * 6.1 + 16);
+    const rectX = align === "left" ? x : x - w;
+    const group = svgEl("g", { class: `rel-node${external ? " external" : ""}` }, [
+      svgEl("rect", { x: rectX, y: y - 11, width: w, height: 22, rx: 5 }),
+      svgEl("text", { x: rectX + w / 2, y: y + 4, "text-anchor": "middle", text: label }),
+      svgEl("title", { text: itemName }),
+    ]);
+    if (!external && onSelect) {
+      group.style.cursor = "pointer";
+      group.addEventListener("click", () => onSelect(itemName));
+    }
+    return { group, edgeX: align === "left" ? rectX + w : rectX };
+  }
+
+  function rowY(i) { return midY - ((rows - 1) * rowH) / 2 + i * rowH; }
+
+  shownParents.forEach((p, i) => {
+    const y = rowY(i);
+    const { group, edgeX } = sideNode(p, false, sideMargin, y, "left");
+    svg.appendChild(svgEl("path", {
+      class: "rel-edge-line in", "marker-end": "url(#rel-arrow)",
+      d: `M${edgeX},${y} C${(edgeX + midX - centerW / 2) / 2},${y} ${(edgeX + midX - centerW / 2) / 2},${midY} ${midX - centerW / 2 - 4},${midY}`,
+    }));
+    svg.appendChild(group);
+  });
+  if (extraParents > 0) {
+    svg.appendChild(svgEl("text", { class: "rel-graph-more", x: sideMargin, y: rowY(shownParents.length - 1) + rowH, text: `+${extraParents}개 더` }));
+  }
+
+  shownChildren.forEach((c, i) => {
+    const y = rowY(i);
+    const { group, edgeX } = sideNode(c.name, c.external, width - sideMargin, y, "right");
+    svg.appendChild(svgEl("path", {
+      class: `rel-edge-line out${c.external ? " external" : ""}`, "marker-end": `url(#${c.external ? "rel-arrow-muted" : "rel-arrow"})`,
+      d: `M${midX + centerW / 2 + 4},${midY} C${(edgeX + midX + centerW / 2) / 2},${midY} ${(edgeX + midX + centerW / 2) / 2},${y} ${edgeX - 4},${y}`,
+    }));
+    svg.appendChild(group);
+  });
+  if (extraChildren > 0) {
+    svg.appendChild(svgEl("text", { class: "rel-graph-more", x: width - sideMargin, y: rowY(shownChildren.length - 1) + rowH, "text-anchor": "end", text: `+${extraChildren}개 더` }));
+  }
+
+  svg.appendChild(svgEl("g", { class: "rel-node rel-node-center" }, [
+    svgEl("rect", { x: midX - centerW / 2, y: midY - 13, width: centerW, height: 26, rx: 6 }),
+    svgEl("text", { x: midX, y: midY + 4, "text-anchor": "middle", text: centerLabel }),
+    svgEl("title", { text: name }),
+  ]));
+
+  return svg;
+}
+
+// Master-detail editor over a build_tree()-shaped dependency tree
+// ({file: {internal: [...], external: [...]}}). Rendering every file's full
+// edge list at once (an earlier version did this) doesn't scale past a
+// couple dozen files: the page turns into one long scroll, and each file's
+// "add dependency" dropdown lists every other file in the project with no
+// way to search it. This instead shows a searchable file list on the left
+// and, on the right, only the selected file's own relationships -- an ego
+// graph (renderMiniGraph, above) plus the same edit controls the old
+// version had, so the amount rendered no longer grows with project size.
+// `dependencies` is a graph, not a tree -- a file can legitimately be
+// depended on by more than one other file -- so this still edits one edge
+// (file -> target) at a time instead of reparenting a whole nested subtree
+// the way an earlier drag-and-drop version did (that collapsed ALL of a
+// shared file's references down to wherever it got dropped, which is almost
+// never what you want). onLink/onUnlink(file, target) are called on each
+// add/remove click; the caller is expected to redraw via the returned
+// .setTree() once the server confirms the change (see /api/pack/link,
+// /api/pack/unlink in showReviewState).
+function renderRelationshipEditor(tree, allFiles, onLink, onUnlink, initialSelected) {
+  const box = el("div", { class: "rel-master-detail" });
   let currentTree = tree;
+  let selected = initialSelected && allFiles.includes(initialSelected) ? initialSelected : (allFiles[0] || null);
 
-  function fileRow(name) {
+  const searchInput = el("input", { type: "text", placeholder: "🔍 파일 검색..." });
+  const listPane = el("div", { class: "rel-file-list" });
+  const detailPane = el("div", { class: "rel-detail-pane" });
+
+  // Everyone whose own `internal` list points at `name` -- the tree only
+  // records outgoing edges per file, so "who depends on me" (shown as the
+  // graph's left/parent side) has to be derived by scanning every file
+  // rather than looked up directly.
+  function dependentsOf(name) {
+    return allFiles.filter(f => (currentTree[f]?.internal || []).includes(name));
+  }
+
+  function selectFile(name) {
+    selected = name;
+    drawList();
+    drawDetail();
+  }
+
+  function drawList() {
+    const q = searchInput.value.trim().toLowerCase();
+    listPane.innerHTML = "";
+    let shown = 0;
+    for (const name of allFiles) {
+      if (q && !name.toLowerCase().includes(q)) continue;
+      shown++;
+      const deps = currentTree[name] || { internal: [], external: [] };
+      const hasEdges = deps.internal.length > 0 || deps.external.length > 0 || dependentsOf(name).length > 0;
+      listPane.appendChild(el("div", {
+        class: `rel-list-row${name === selected ? " active" : ""}`,
+        onclick: () => selectFile(name),
+      }, [
+        el("span", { class: `rel-dot${hasEdges ? " has-edges" : ""}` }),
+        el("span", { class: "rel-list-name", text: name }),
+      ]));
+    }
+    if (!shown) listPane.appendChild(el("p", { class: "muted", style: "padding:10px", text: "일치하는 파일 없음" }));
+  }
+
+  function drawDetail() {
+    detailPane.innerHTML = "";
+    if (!selected) {
+      detailPane.appendChild(el("p", { class: "muted", text: "왼쪽에서 파일을 선택하세요." }));
+      return;
+    }
+    const name = selected;
     const deps = currentTree[name] || { internal: [], external: [] };
-    const edgeList = el("div", { class: "rel-edges" });
+    const parents = dependentsOf(name);
+    const children = [
+      ...deps.internal.map(c => ({ name: c, external: false })),
+      ...deps.external.map(c => ({ name: c, external: true })),
+    ];
 
+    detailPane.appendChild(el("div", { class: "file-edit-name", text: `📄 ${name}` }));
+    detailPane.appendChild(renderMiniGraph(name, parents, children, selectFile));
+
+    const edgeList = el("div", { class: "rel-edges" });
     for (const child of deps.internal) {
       const unlinkButton = el("button", { class: "secondary", text: "끊기" });
       unlinkButton.addEventListener("click", () => onUnlink(name, child));
@@ -264,31 +567,36 @@ function renderRelationshipEditor(tree, allFiles, onLink, onUnlink) {
       edgeList.appendChild(el("div", { class: "rel-edge muted" }, el("span", { text: `→ 📦 ${ext}` })));
     }
     if (!deps.internal.length && !deps.external.length) {
-      edgeList.appendChild(el("p", { class: "muted", text: "(의존성 없음)" }));
+      edgeList.appendChild(el("p", { class: "muted", text: "(이 파일이 의존하는 대상 없음)" }));
+    }
+    detailPane.appendChild(edgeList);
+
+    if (parents.length) {
+      detailPane.appendChild(el("p", { class: "muted", text: `이 파일에 의존하는 파일 ${parents.length}개: ${parents.join(", ")}` }));
     }
 
-    const targetSelect = el("select", {}, [
-      el("option", { value: "", text: "-- 연결할 파일 선택 --" }),
-      ...allFiles.filter(f => f !== name && !deps.internal.includes(f)).map(f => el("option", { value: f, text: f })),
-    ]);
+    const targetListId = "rel-target-options";
+    const targetInput = el("input", { type: "text", list: targetListId, placeholder: "🔍 연결할 파일 검색..." });
+    const targetOptions = el("datalist", { id: targetListId },
+      allFiles.filter(f => f !== name && !deps.internal.includes(f)).map(f => el("option", { value: f })));
     const linkButton = el("button", { class: "secondary", text: "+ 연결 추가", onclick: () => {
-      if (targetSelect.value) onLink(name, targetSelect.value);
+      const target = targetInput.value.trim();
+      if (target && target !== name) onLink(name, target);
     } });
-
-    return el("div", { class: "rel-file-row" }, [
-      el("div", { class: "file-edit-name", text: `📄 ${name}` }),
-      edgeList,
-      el("div", { class: "toolbar" }, [targetSelect, linkButton]),
-    ]);
+    detailPane.appendChild(el("div", { class: "toolbar" }, [targetInput, targetOptions, linkButton]));
   }
 
-  function draw() {
-    box.innerHTML = "";
-    for (const name of allFiles) box.appendChild(fileRow(name));
-  }
-  draw();
+  searchInput.addEventListener("input", drawList);
+  drawList();
+  drawDetail();
 
-  return { el: box, setTree: (tree) => { currentTree = tree; draw(); } };
+  box.appendChild(el("div", { class: "rel-list-pane" }, [searchInput, listPane]));
+  box.appendChild(detailPane);
+
+  return {
+    el: box,
+    setTree: (tree) => { currentTree = tree; drawList(); drawDetail(); },
+  };
 }
 
 async function renderPackJob(jobId) {
@@ -316,11 +624,7 @@ async function renderPackJob(jobId) {
   function showDoneState(result) {
     statusBadge.className = "pack-status done";
     statusBadge.textContent = "완료";
-    const openIt = () => {
-      localStorage.setItem(LS_AIF, result.aif_path);
-      localStorage.setItem(LS_PROJECT, result.project_path);
-      location.hash = "#/overview";
-    };
+    const openIt = () => openProject(result.aif_path, result.project_path);
     body.appendChild(el("div", { class: "copy-row" }, [
       el("p", { text: `저장됨: ${result.aif_path}` }),
       el("button", { text: "결과 열기", onclick: openIt }),
@@ -362,6 +666,18 @@ async function renderPackJob(jobId) {
       return showErrorState(e.message);
     }
 
+    // Error prevention (Nielsen heuristic #5): name/guide/rules/summary
+    // edits below live only in this page's JS state until "완료 및 저장" is
+    // clicked -- unlike relationship link/unlink, which hits the server
+    // immediately (see add_dependency_in_job/remove_dependency_in_job).
+    // A reload or window close here would silently discard all of it with
+    // no warning, so guard it the same way any form with unsaved changes
+    // should. Cleared on both ways out of this screen (submit succeeds,
+    // cancel confirmed) so it doesn't linger and warn on an unrelated later
+    // navigation.
+    const beforeUnload = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", beforeUnload);
+
     const nameInput = el("input", { type: "text", value: review.project.name || "" });
     const promptInput = el("textarea", { rows: "3" });
     promptInput.value = review.project.prompt || "";
@@ -387,6 +703,9 @@ async function renderPackJob(jobId) {
 
     const treeError = el("div", { class: "error hidden" });
     const allFileNames = [...review.needs_review, ...review.auto_kept].map(e => e.file).sort();
+    // Default the relationship editor's selection to the first flagged file,
+    // if any -- a file low-confidence enough to need a summary review is
+    // also a reasonable first guess for "worth checking its dependencies too".
     const relEditor = renderRelationshipEditor(
       review.tree,
       allFileNames,
@@ -409,7 +728,8 @@ async function renderPackJob(jobId) {
           treeError.textContent = e.message;
           treeError.classList.remove("hidden");
         }
-      }
+      },
+      review.needs_review[0]?.file
     );
 
     const summaryInputs = {};
@@ -436,6 +756,7 @@ async function renderPackJob(jobId) {
           rules,
           summaries,
         });
+        window.removeEventListener("beforeunload", beforeUnload);
         body.innerHTML = "";
         showDoneState(result);
       } catch (e) {
@@ -447,11 +768,17 @@ async function renderPackJob(jobId) {
     });
 
     cancelButton.addEventListener("click", async () => {
+      // Error prevention: this throws away every edit made on this screen
+      // (name/guide/rules/summaries -- see the beforeUnload comment above)
+      // with no undo, so it gets the same one-step confirmation any
+      // destructive action should have rather than firing on a single click.
+      if (!confirm("검토 중인 내용을 취소하고 버릴까요? 저장되지 않은 편집 내용이 모두 사라집니다.")) return;
       // Disable both, not just this one -- otherwise a click here followed
       // fast enough by a click on "완료 및 저장" (still enabled) fires both
       // requests before either response comes back.
       cancelButton.disabled = true;
       submitButton.disabled = true;
+      window.removeEventListener("beforeunload", beforeUnload);
       try { await apiPost("/api/pack/cancel", { job_id: jobId }); } catch (e) { /* best-effort */ }
       location.hash = "#/";
     });
@@ -462,7 +789,7 @@ async function renderPackJob(jobId) {
       el("h3", { text: "코딩 룰" }), rulesList,
       el("div", { class: "toolbar" }, [newRuleInput, addRuleButton]),
       el("h3", { text: "파일 관계" }),
-      el("p", { class: "muted", text: "각 파일마다 \"끊기\"로 특정 의존성 하나만 제거하거나, 드롭다운으로 다른 파일에 대한 의존성을 추가할 수 있습니다. 외부 패키지(📦)는 읽기 전용입니다." }),
+      el("p", { class: "muted", text: "왼쪽에서 파일을 검색해 선택하면 그 파일의 관계만 그래프와 함께 표시됩니다. 그래프의 다른 파일 노드를 클릭하면 그쪽으로 이동합니다. \"끊기\"로 의존성 하나를 제거하거나, 검색창에 파일명을 입력해 새 의존성을 추가하세요. 외부 패키지(📦)는 읽기 전용입니다." }),
       relEditor.el, treeError,
       el("h3", { text: `⚠️ 검토 필요 (${review.needs_review.length}개)` }), needsReviewBox,
       el("h3", { text: `자동 승인됨 (${review.auto_kept.length}개, 필요 시 수정 가능)` }), autoKeptBox,
@@ -510,7 +837,7 @@ async function renderPackJob(jobId) {
 
 async function renderOverview() {
   nav.classList.remove("hidden");
-  app.innerHTML = "";
+  showLoading();
   try {
     const data = await api("/api/overview", { aif_path: getAif(), project_path: getProject() });
     setStale(data._stale);
@@ -527,6 +854,7 @@ async function renderOverview() {
       `# ${data.project.name}\n\n${data.project.prompt || ""}\n\n## Rules\n` +
       (data.rules || []).map(r => `- ${r}`).join("\n");
 
+    app.innerHTML = "";
     app.appendChild(el("div", { class: "card" }, [
       el("h1", { text: data.project.name || "(제목 없음)" }),
       el("h2", { text: `파일 ${data.file_count}개` }),
@@ -544,7 +872,7 @@ async function renderOverview() {
 
 async function renderFiles() {
   nav.classList.remove("hidden");
-  app.innerHTML = "";
+  showLoading();
   try {
     const data = await api("/api/files", { aif_path: getAif(), project_path: getProject() });
     setStale(data._stale);
@@ -552,16 +880,41 @@ async function renderFiles() {
 
     const filterInput = el("input", { type: "text", placeholder: "파일명/요약 검색..." });
     const tbody = el("tbody");
+
+    // null = original (server) order; otherwise toggled asc/desc on header
+    // click -- e.g. sorting by confidence ascending to triage the worst
+    // summaries first is a real workflow this table couldn't support before.
+    let sortKey = null;
+    let sortDir = 1;
+    function sortArrow(key) { return sortKey === key ? (sortDir === 1 ? " ▲" : " ▼") : ""; }
+    const nameTh = el("th", { text: `파일${sortArrow("name")}`, class: "sortable" });
+    const confTh = el("th", { text: `신뢰도${sortArrow("confidence")}`, class: "sortable" });
+    for (const [th, key] of [[nameTh, "name"], [confTh, "confidence"]]) {
+      th.addEventListener("click", () => {
+        sortDir = sortKey === key ? -sortDir : 1;
+        sortKey = key;
+        nameTh.textContent = `파일${sortArrow("name")}`;
+        confTh.textContent = `신뢰도${sortArrow("confidence")}`;
+        draw();
+      });
+    }
     const table = el("table", {}, [
-      el("thead", {}, el("tr", {}, [el("th", { text: "파일" }), el("th", { text: "요약" }), el("th", { text: "신뢰도" })])),
+      el("thead", {}, el("tr", {}, [nameTh, el("th", { text: "요약" }), confTh])),
       tbody,
     ]);
 
     function draw() {
       const q = filterInput.value.toLowerCase();
+      let entries = Object.entries(data).filter(([name, info]) =>
+        !q || name.toLowerCase().includes(q) || (info.summary || "").toLowerCase().includes(q));
+      if (sortKey) {
+        entries = entries.slice().sort(([an, ai], [bn, bi]) => {
+          const [av, bv] = sortKey === "name" ? [an, bn] : [ai.confidence ?? 1.0, bi.confidence ?? 1.0];
+          return av < bv ? -sortDir : av > bv ? sortDir : 0;
+        });
+      }
       tbody.innerHTML = "";
-      for (const [name, info] of Object.entries(data)) {
-        if (q && !name.toLowerCase().includes(q) && !(info.summary || "").toLowerCase().includes(q)) continue;
+      for (const [name, info] of entries) {
         const conf = info.confidence ?? 1.0;
         const level = confidenceLevel(conf);
         const row = el("tr", { class: `file-row${level === "low" ? " low-confidence" : ""}`, onclick: () => { location.hash = `#/files/${encodeURIComponent(name)}`; } }, [
@@ -575,6 +928,7 @@ async function renderFiles() {
     filterInput.addEventListener("input", draw);
     draw();
 
+    app.innerHTML = "";
     app.appendChild(el("div", { class: "toolbar" }, filterInput));
     app.appendChild(table);
   } catch (e) { showError(e); }
@@ -582,7 +936,7 @@ async function renderFiles() {
 
 async function renderFileDetail(name, params) {
   nav.classList.remove("hidden");
-  app.innerHTML = "";
+  showLoading();
   try {
     const [files, dependents, blastRadius, detail] = await Promise.all([
       api("/api/files", { aif_path: getAif() }),
@@ -601,6 +955,7 @@ async function renderFileDetail(name, params) {
 
     const fullText = () => `# ${name}\n\n${info.summary || ""}\n\n\`\`\`\n${detail.compressed}\n\`\`\``;
 
+    app.innerHTML = "";
     app.appendChild(el("div", { class: "card" }, [
       el("h1", { text: name }),
       el("p", { text: info.summary || "" }),
