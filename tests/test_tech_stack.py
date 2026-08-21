@@ -1,5 +1,6 @@
 import json
 
+import tech_stack
 from tech_stack import detect_tech_stack, MAX_DEPENDENCIES
 
 
@@ -164,3 +165,135 @@ def test_ignores_a_manifest_found_in_a_subdirectory(tmp_path):
     nested.mkdir()
     _write(nested / "package.json", json.dumps({"dependencies": {"react": "1.0"}}))
     assert detect_tech_stack(str(tmp_path)) == []
+
+
+# --- Regression tests for real bugs a code review found by executing the
+# actual parsers against non-standard-but-legal manifest shapes -- each one
+# reproduced a crash or a silent-corruption case before being fixed. ---
+
+def test_pyproject_toml_survives_a_non_table_project_key(tmp_path):
+    # `project = "foo"` is valid TOML; _dig() must not chain .get() onto a
+    # string and raise AttributeError.
+    _write(tmp_path / "pyproject.toml", 'project = "foo"\n')
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == []
+
+
+def test_pyproject_toml_survives_a_non_table_tool_key(tmp_path):
+    _write(tmp_path / "pyproject.toml", 'tool = "foo"\n')
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == []
+
+
+def test_pyproject_toml_survives_a_non_list_dependencies_field(tmp_path):
+    # A manifest typo -- `dependencies = "flask"` instead of a list -- must
+    # not silently explode the string into per-character garbage names.
+    _write(tmp_path / "pyproject.toml", '[project]\ndependencies = "flask"\n')
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == []
+
+
+def test_pyproject_toml_skips_a_non_string_dependency_entry(tmp_path):
+    _write(tmp_path / "pyproject.toml", '[project]\ndependencies = ["flask", 123]\n')
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == ["flask"]
+
+
+def test_package_json_survives_a_non_dict_dependencies_value(tmp_path):
+    _write(tmp_path / "package.json", json.dumps({"dependencies": True}))
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == []
+
+
+def test_cargo_toml_survives_a_non_table_dependencies_value(tmp_path):
+    _write(tmp_path / "Cargo.toml", "dependencies = true\n")
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == []
+
+
+def test_composer_json_survives_a_non_dict_require_value(tmp_path):
+    _write(tmp_path / "composer.json", json.dumps({"require": True}))
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == []
+
+
+def test_go_mod_empty_inline_require_block_does_not_swallow_later_lines(tmp_path):
+    # "require ()" puts both "(" and ")" on the opening line -- must not
+    # leave the parser stuck "inside" the block for the rest of the file.
+    _write(tmp_path / "go.mod", "\n".join([
+        "module example.com/x",
+        "",
+        "require ()",
+        "",
+        "replace example.com/foo => ./local",
+    ]))
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == []
+
+
+def test_pom_xml_excludes_dependency_management_entries(tmp_path):
+    # A <dependencyManagement> BOM import is not a real project dependency
+    # -- only the top-level <dependencies> block is.
+    _write(tmp_path / "pom.xml", "\n".join([
+        '<project xmlns="http://maven.apache.org/POM/4.0.0">',
+        "  <dependencyManagement>",
+        "    <dependencies>",
+        "      <dependency>",
+        "        <groupId>org.springframework.boot</groupId>",
+        "        <artifactId>spring-boot-dependencies</artifactId>",
+        "      </dependency>",
+        "    </dependencies>",
+        "  </dependencyManagement>",
+        "  <dependencies>",
+        "    <dependency>",
+        "      <groupId>org.springframework</groupId>",
+        "      <artifactId>spring-core</artifactId>",
+        "    </dependency>",
+        "  </dependencies>",
+        "</project>",
+    ]))
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == ["spring-core"]
+
+
+def test_requirements_txt_extracts_name_from_a_vcs_url_egg_fragment(tmp_path):
+    _write(tmp_path / "requirements.txt", "git+https://github.com/foo/bar.git#egg=bar\n")
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == ["bar"]
+
+
+def test_requirements_txt_extracts_name_from_an_editable_vcs_url(tmp_path):
+    _write(tmp_path / "requirements.txt", "-e git+https://github.com/foo/bar.git#egg=bar\n")
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == ["bar"]
+
+
+def test_requirements_txt_skips_a_vcs_url_with_no_egg_fragment(tmp_path):
+    # No #egg= means no reliable package name -- must not fall through to
+    # the version-specifier split and emit the mangled URL as a "name".
+    _write(tmp_path / "requirements.txt", "git+https://github.com/foo/bar.git\n")
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == []
+
+
+def test_detect_tech_stack_never_raises_on_an_unanticipated_parser_error(tmp_path, monkeypatch):
+    def _boom(path):
+        raise RuntimeError("simulated parser bug")
+
+    monkeypatch.setattr(tech_stack, "_MANIFESTS", [
+        ("package.json", "JavaScript/TypeScript", "npm", _boom),
+    ])
+    _write(tmp_path / "package.json", "{}")
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["dependencies"] == []
+
+
+def test_pyproject_toml_still_gets_an_entry_when_tomllib_is_unavailable(tmp_path, monkeypatch):
+    # Simulates Python < 3.11 (no stdlib tomllib) -- the manifest's presence
+    # is still detected (ecosystem is known from the filename alone), just
+    # with an empty dependency list, same as any other unreadable manifest.
+    monkeypatch.setattr(tech_stack, "tomllib", None)
+    _write(tmp_path / "pyproject.toml", '[project]\ndependencies = ["flask"]\n')
+    stacks = detect_tech_stack(str(tmp_path))
+    assert stacks[0]["manifest"] == "pyproject.toml"
+    assert stacks[0]["dependencies"] == []
