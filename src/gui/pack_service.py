@@ -72,6 +72,7 @@ import uuid
 from pathlib import Path
 
 import packager
+from config import load_config
 from confidence import triage
 from edits import finalize_aif, set_file_summary, set_project_name, set_project_prompt
 from file.collector import collect_files
@@ -147,8 +148,15 @@ def list_selectable_files(project_path: str) -> dict:
     human sees the real file list (and why anything got excluded) instead of
     guessing. Whatever's checked from `safe` on submit becomes
     start_pack_job()'s `selected_files`.
+
+    Also loads project_path's .ziplex.json (config.py), the same way pack()
+    itself does, so a file this screen never shows can't be re-included by
+    submitting selected_files with its name in it -- pack()'s own
+    collect_files() call wouldn't have produced it either, so it just
+    silently wouldn't match anything in `preselected`.
     """
-    files = collect_files(project_path)
+    project_config = load_config(project_path)
+    files = collect_files(project_path, include=project_config["include"] or None, ignore=project_config["ignore"] or None)
     scan_result = scan_files(files)
     return {
         "safe": sorted(_rel_key(f, project_path) for f in scan_result["safe"]),

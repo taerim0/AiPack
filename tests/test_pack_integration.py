@@ -57,6 +57,37 @@ def test_pack_runs_end_to_end_with_mock_provider(tmp_path, monkeypatch):
     assert set(aif["_manifest"].keys()) == {"main.py", "README.md"}
 
 
+def test_pack_scopes_files_via_ziplex_json_include(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "src" / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "README.md", "# Sample\n")
+    _write(project / ".ziplex.json", json.dumps({"include": ["src/**"], "ignore": []}))
+
+    aif = packager.pack(str(project), auto=True, interactive=False)
+
+    assert set(aif["files"].keys()) == {"src/main.py"}
+
+
+def test_pack_include_ignore_params_extend_ziplex_json_not_replace_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "src" / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "src" / "main.generated.py", "def gen():\n    pass\n")
+    _write(project / "README.md", "# Sample\n")
+    _write(project / ".ziplex.json", json.dumps({"include": ["src/**"], "ignore": []}))
+
+    # --ignore's pattern layers on top of (not instead of) the config
+    # file's own include scope
+    aif = packager.pack(str(project), auto=True, interactive=False, ignore=["*.generated.py"])
+
+    assert set(aif["files"].keys()) == {"src/main.py"}
+
+
 def test_save_aif_writes_a_sibling_cache_json_from_the_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")

@@ -41,6 +41,7 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 - **Incremental re-pack** — a content-hash manifest (`<name>.cache.json`) lets a later `pack` on the same project reuse an unchanged file's summary instead of paying for another LLM call, so keeping a project's `aif.json` current stays cheap enough to actually do routinely. Detecting *whether* it's gone stale is also exposed standalone via `check_freshness`, without triggering a re-pack (see MCP server below).
 - **Provider-agnostic LLM layer** — swapping Gemini for another model is implementing one `generate()` method and registering it, not touching the rest of the pipeline.
 - **Not just for git repos** — works on any collection of local files with relationships across extensions: game mods, asset projects, whatever isn't a typical software repo.
+- **Scope a pack with `include`/`ignore` glob patterns** — one-off via `--include`/`--ignore`, or persisted per-project in a `.ziplex.json` (`init` scaffolds one) so a large repo doesn't mean either clicking through every file or an all-or-nothing `--auto`.
 - **Local GUI, no CLI required** — pack a project, review its summaries, and edit relationships all from a native window (or a plain browser tab) instead of the terminal; the same GUI doubles as a read-only browse/search companion over an already-packed project for anyone without Claude Code or MCP access (see [GUI](#gui) below).
 - **Claude Agent Skill export** — turn an already-packed project into a `.claude/skills/` directory Claude Code discovers and progressively loads on its own, no MCP server required (see [Claude Agent Skill export](#claude-agent-skill-export) below).
 
@@ -72,9 +73,26 @@ python src/cli.py pack ./your-project/ -o output/out.json
 
 # Force-resummarize every file, ignoring any previous pack found on disk
 python src/cli.py pack ./your-project/ --no-cache
+
+# Scope to just what you want packed -- a one-off flag, or persisted below
+python src/cli.py pack ./your-project/ --include "src/**/*.py,*.md" --ignore "**/*.generated.*"
 ```
 
 Re-running `pack` on a project you've packed before only re-summarizes files that actually changed (by content hash) — everything else reuses its previous summary instead of another LLM call.
+
+### Config file
+
+`python src/cli.py init ./your-project/` scaffolds `.ziplex.json` in the target project (not in Ziplex's own repo) so `include`/`ignore` glob patterns don't need retyping on every `pack`:
+
+```jsonc
+// your-project/.ziplex.json
+{
+  "include": ["src/**/*.py", "*.md"],  // empty = everything not ignored (default)
+  "ignore": ["**/*.generated.*"]        // extra patterns beyond DEFAULT_IGNORE/.gitignore
+}
+```
+
+`--include`/`--ignore` CLI flags add to this file's patterns rather than replacing them. Every subcommand that previews what `pack` would collect (`collect`, `tree`, `tokens`, `search`, `freshness`, `select`, `analyze`) reads the same file, so none of them drift out of sync with what a real `pack` on that project would actually see. Worth committing alongside the project the same way `aif.json`/`detail.json` already can (see Team use below) — it documents how that project gets packed.
 
 <details>
 <summary>Every command</summary>
@@ -82,12 +100,14 @@ Re-running `pack` on a project you've packed before only re-summarizes files tha
 | Command | Description |
 |---|---|
 | `pack <path>` | Full pipeline — the one most people want |
+| `init <path>` | Scaffold `.ziplex.json` (`include`/`ignore` glob patterns) in the target project |
 | `collect <path>` | File collection + security scan only |
 | `tokens <path>` | Token count, before/after compression |
 | `tree <path>` | Dependency tree only |
 | `search <path> <pattern>` | Regex search across all safe files (`--context N`, `--ignore-case`) |
 | `detail <name>.detail.json <file-key>` | Partial read of one file's compressed body (`--start`/`--end`) |
 | `freshness <path> <name>.cache.json` | Hash-check `aif.json` against the files on disk — no LLM calls |
+| `skill <name>.json` | Export as a Claude Agent Skill (`.claude/skills/<slug>/`) — no MCP server needed |
 | `select <path>` | Interactive file selection only |
 | `analyze <path>` | LLM analysis only |
 | `signatures \| dependencies \| api \| compress \| debug <file>` | Run one extraction step on a single file |

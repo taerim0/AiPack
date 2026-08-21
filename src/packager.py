@@ -12,6 +12,7 @@ from tokenizer import analyze_tokens_with_payload
 from llm import analyze_file_summary, analyze_text_summary, analyze_batch_summaries, analyze_rules, analyze_prompt
 from freshness import build_manifest, check_freshness
 from confidence import estimate_confidence
+from config import load_config
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
 RESULT_DIR = Path(__file__).parent.parent / "result"
@@ -212,8 +213,20 @@ def pack(
     interactive: bool = True,
     use_cache: bool = True,
     preselected: list[str] | None = None,
+    include: list[str] | None = None,
+    ignore: list[str] | None = None,
 ) -> dict:
-    """auto controls file selection (skip the interactive picker, include all
+    """include/ignore are extra glob patterns (gitignore syntax -- see
+    collect_files()'s own docstring for exactly how each is applied),
+    unioned with whatever's already in the target project's .ziplex.json
+    (config.py) rather than replacing it -- typically sourced from a CLI
+    --include/--ignore flag for a one-off scope without editing the config
+    file. Both apply before file selection (auto/preselected/interactive
+    picker all choose from the same already-filtered candidate set), so a
+    file excluded here never reaches the security scan or shows up as a
+    choice at all, the same as one excluded by DEFAULT_IGNORE/.gitignore.
+
+    auto controls file selection (skip the interactive picker, include all
     safe files); interactive controls whether a failing LLM call can prompt
     for input at all. The two are independent: `--auto` alone still lets
     handle_llm_failure() ask what to do on a repeated failure, while
@@ -258,7 +271,10 @@ def pack(
 
     # 1. Collect files
     print("\n📁 파일 수집 중...")
-    files = collect_files(root_path)
+    project_config = load_config(root_path)
+    combined_include = (project_config["include"] or []) + (include or [])
+    combined_ignore = (project_config["ignore"] or []) + (ignore or [])
+    files = collect_files(root_path, include=combined_include or None, ignore=combined_ignore or None)
 
     # 2. Security scan
     print("🔒 보안 스캔 중...")

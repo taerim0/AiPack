@@ -8,8 +8,10 @@ Two shared low-level helpers everything else in the pipeline builds on: `read_te
 
 ## collector.py
 
-`collect_files(root_path)` walks the tree and excludes two ways:
+`collect_files(root_path, include=None, ignore=None)` walks the tree and excludes several ways:
 - **`DEFAULT_IGNORE`** — a curated pattern list (node_modules/, build caches like `.gradle/`/`target/`/`.pytest_cache/`, OS junk, etc.) plus whatever the project's own `.gitignore` adds, compiled together via `pathspec.PathSpec.from_lines("gitignore", ...)`. (Not `"gitwildmatch"` — that pattern factory is deprecated in the installed `pathspec` version; `"gitignore"` is the behavior-identical replacement.) This list can never be exhaustive across every build tool, and it's cheap to check (skips whole directories before reading any file content), so it's the first filter, not the only one.
+- **`ignore`** — extra patterns beyond `DEFAULT_IGNORE`/`.gitignore`, merged into the same `pathspec` before the walk (so an ignored directory is pruned the same efficient way a `DEFAULT_IGNORE` one already is) rather than filtered after. Typically sourced from a project's `.ziplex.json` (`config.py`) or a `--ignore` CLI flag.
+- **`include`** — the inverse: if given, a file must match at least one pattern to survive. Applied as a pure post-filter on the already-collected list, deliberately *not* used to prune directories during the walk the way `ignore` is -- an include pattern like `"src/**/*.py"` says nothing about whether some unrelated-looking intermediate directory might still hold a matching file deeper inside, so pruning on it could silently drop real matches. `None`/`[]` both mean "no include filter" (today's behavior, keep everything not ignored) -- only a non-empty list actually narrows anything.
 - **Content-based binary filter** — any file `read_text()` can't decode as UTF-8 is dropped regardless of name/extension. This is the actual safety net: no fixed ignore list can enumerate every binary format a project might contain, but a file being non-text is directly checkable. Before this existed, a binary file that slipped past `DEFAULT_IGNORE` would still get an LLM summary "hallucinated" purely from its filename (see `packager.py`'s `_request_summary`) — pure token overhead with zero real content behind it.
 
 ## scanner.py

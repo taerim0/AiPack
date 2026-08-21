@@ -43,6 +43,7 @@ project/  ──►  수집  ──►  보안 스캔  ──►  선택  ──
 - **git 저장소 전용이 아님** — 일반적인 소프트웨어 저장소가 아니어도 상관없습니다. 게임 모드, 에셋 프로젝트처럼 여러 확장자의 파일이 서로 얽혀 있는 로컬 파일 모음이라면 무엇이든 동작합니다.
 - **CLI 없이 쓰는 로컬 GUI** — 터미널 대신 네이티브 창(또는 일반 브라우저 탭)에서 프로젝트를 패킹하고, 요약을 검토하고, 관계를 편집할 수 있습니다. 같은 GUI가 Claude Code나 MCP를 쓸 수 없는 환경에서 이미 패킹된 프로젝트를 둘러보는 읽기 전용 브라우저 역할도 합니다(아래 [GUI](#gui) 참고).
 - **Claude Agent Skill 내보내기** — 이미 패킹된 프로젝트를 `.claude/skills/` 디렉터리로 만들어서, MCP 서버 없이도 Claude Code가 알아서 점진적으로 불러오게 합니다(아래 [Claude Agent Skill 내보내기](#claude-agent-skill-내보내기) 참고).
+- **`include`/`ignore` glob 패턴으로 패킹 범위 지정** — 일회성으로는 `--include`/`--ignore`, 프로젝트별로 고정하고 싶으면 `.ziplex.json`(`init`으로 생성)에 — 큰 저장소라고 해서 파일을 일일이 클릭하거나 전부(`--auto`) 둘 중 하나만 있는 게 아닙니다.
 
 ## 빠른 시작
 
@@ -72,9 +73,26 @@ python src/cli.py pack ./your-project/ -o output/out.json
 
 # 이전 pack 결과 무시하고 모든 파일 요약을 강제로 다시 생성
 python src/cli.py pack ./your-project/ --no-cache
+
+# 패킹 범위를 원하는 만큼만 -- 한 번만 쓸 거면 플래그로, 계속 쓸 거면 아래 설정 파일로
+python src/cli.py pack ./your-project/ --include "src/**/*.py,*.md" --ignore "**/*.generated.*"
 ```
 
 전에 한 번 pack한 프로젝트를 다시 pack하면, 실제로 내용이 바뀐 파일(콘텐츠 해시 기준)만 다시 요약합니다 — 나머지는 이전 요약을 그대로 재사용해서 LLM을 다시 호출하지 않습니다.
+
+### 설정 파일
+
+`python src/cli.py init ./your-project/`를 실행하면 대상 프로젝트(Ziplex 저장소 자체가 아니라) 안에 `.ziplex.json`이 생겨서, `pack`을 돌릴 때마다 `include`/`ignore` 패턴을 다시 타이핑할 필요가 없습니다:
+
+```jsonc
+// your-project/.ziplex.json
+{
+  "include": ["src/**/*.py", "*.md"],  // 비어있으면 제외되지 않은 전부 (기본값)
+  "ignore": ["**/*.generated.*"]        // DEFAULT_IGNORE/.gitignore 외에 추가로 제외할 패턴
+}
+```
+
+`--include`/`--ignore` CLI 플래그는 이 파일의 패턴을 대체하는 게 아니라 더해집니다. `pack`이 뭘 수집할지 미리 보여주는 서브커맨드들(`collect`, `tree`, `tokens`, `search`, `freshness`, `select`, `analyze`)도 전부 같은 파일을 읽어서, 실제 `pack`이 보는 것과 어긋나지 않습니다. `aif.json`/`detail.json`처럼(아래 팀에서 사용하기 참고) 프로젝트와 함께 커밋해둘 만합니다 — 이 프로젝트를 어떻게 패킹하는지 그 자체로 문서가 됩니다.
 
 <details>
 <summary>전체 명령어</summary>
@@ -82,12 +100,14 @@ python src/cli.py pack ./your-project/ --no-cache
 | 명령어 | 설명 |
 |---|---|
 | `pack <path>` | 전체 파이프라인 — 대부분 이걸 쓰면 됩니다 |
+| `init <path>` | 대상 프로젝트에 `.ziplex.json`(`include`/`ignore` glob 패턴) 생성 |
 | `collect <path>` | 파일 수집 + 보안 스캔만 |
 | `tokens <path>` | 압축 전/후 토큰 수 |
 | `tree <path>` | 의존성 트리만 |
 | `search <path> <pattern>` | 안전한 파일 전체에서 정규식 검색 (`--context N`, `--ignore-case`) |
 | `detail <name>.detail.json <file-key>` | 파일 하나의 압축 본문을 부분만 읽기 (`--start`/`--end`) |
 | `freshness <path> <name>.cache.json` | `aif.json`이 디스크의 실제 파일과 맞는지 해시로 확인 — LLM 호출 없음 |
+| `skill <name>.json` | Claude Agent Skill로 내보내기 (`.claude/skills/<slug>/`) — MCP 서버 불필요 |
 | `select <path>` | 대화형 파일 선택만 |
 | `analyze <path>` | LLM 분석만 |
 | `signatures \| dependencies \| api \| compress \| debug <file>` | 파일 하나에 대해 추출 단계 하나만 실행 |

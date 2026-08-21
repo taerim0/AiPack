@@ -16,6 +16,18 @@ from file.relationship import build_tree, print_tree as print_dependency_tree
 from search import search_files, read_detail_range
 from freshness import check_freshness
 from skill_export import export_skill
+from config import load_config, init_config, CONFIG_FILENAME
+
+
+def _collection_kwargs(path: str) -> dict:
+    """include/ignore kwargs for collect_files(), sourced from path's
+    .ziplex.json (config.py) -- shared by every subcommand below that
+    previews some slice of what `pack` itself would collect, so none of
+    them drift out of sync with what a project's own config actually scopes
+    pack to.
+    """
+    cfg = load_config(path)
+    return {"include": cfg["include"] or None, "ignore": cfg["ignore"] or None}
 
 
 def main():
@@ -55,6 +67,8 @@ def main():
     p.add_argument("--auto", action="store_true", help="파일 자동 선택 (전체 안전 파일 포함)")
     p.add_argument("--auto-correct", action="store_true", help="LLM 결과 자동 승인 (대화형 보정 건너뜀)")
     p.add_argument("--no-cache", action="store_true", help="변경 없는 파일도 요약을 다시 생성 (이전 pack 재사용 끄기)")
+    p.add_argument("--include", default=None, help="포함할 glob 패턴, 쉼표로 구분 (예: 'src/**/*.py,*.md') -- .ziplex.json의 include에 추가됨")
+    p.add_argument("--ignore", default=None, help="추가로 제외할 glob 패턴, 쉼표로 구분 -- .ziplex.json의 ignore에 추가됨")
 
     tr = sub.add_parser("tree", help="의존성 트리 출력")
     tr.add_argument("path", help="프로젝트 폴더 경로")
@@ -78,6 +92,9 @@ def main():
     sk = sub.add_parser("skill", help="aif.json을 Claude Agent Skill로 내보내기 (.claude/skills/, MCP 서버 없이도 인식됨)")
     sk.add_argument("aif_path", help="aif.json 경로")
     sk.add_argument("--output", "-o", default=None, help="출력 디렉터리 (기본값: .claude/skills/<프로젝트명>/)")
+
+    ini = sub.add_parser("init", help="프로젝트에 .ziplex.json 설정 파일 생성 (include/ignore 패턴)")
+    ini.add_argument("path", help="프로젝트 폴더 경로")
 
     args = parser.parse_args()
 
@@ -103,7 +120,7 @@ def main():
         debug_tree(args.file)
 
     elif args.command == "collect":
-        files = collect_files(args.path)
+        files = collect_files(args.path, **_collection_kwargs(args.path))
         scan_result = scan_files(files)
 
         print(f"\n📁 수집된 파일: {len(files)}개")
@@ -117,7 +134,7 @@ def main():
         print(f"\n✅ 안전한 파일: {len(scan_result['safe'])}개")
 
     elif args.command == "tokens":
-        files = collect_files(args.path)
+        files = collect_files(args.path, **_collection_kwargs(args.path))
         scan_result = scan_files(files)
         safe_files = scan_result["safe"]
 
@@ -130,7 +147,7 @@ def main():
             print(f"  절감:    {data['saved']:,} 토큰 ({data['saved_pct']}% 감소)\n")
 
     elif args.command == "select":
-        files = collect_files(args.path)
+        files = collect_files(args.path, **_collection_kwargs(args.path))
         scan_result = scan_files(files)
         safe_files = scan_result["safe"]
 
@@ -143,7 +160,7 @@ def main():
 
     elif args.command == "analyze":
         # 1. Collect files
-        files = collect_files(args.path)
+        files = collect_files(args.path, **_collection_kwargs(args.path))
         scan_result = scan_files(files)
         safe_files = scan_result["safe"]
 
@@ -211,7 +228,11 @@ def main():
     elif args.command == "pack":
         # --auto-correct also means no terminal to prompt if an LLM call
         # keeps failing inside pack() itself (see handle_llm_failure).
-        aif = pack(args.path, auto=args.auto, interactive=not args.auto_correct, use_cache=not args.no_cache)
+        aif = pack(
+            args.path, auto=args.auto, interactive=not args.auto_correct, use_cache=not args.no_cache,
+            include=args.include.split(",") if args.include else None,
+            ignore=args.ignore.split(",") if args.ignore else None,
+        )
         if aif:
             if args.auto_correct:
                 aif = finalize_aif(aif)  # skip interactive review, still build relationships
@@ -244,7 +265,7 @@ def main():
                 print(f"  {model}: {data['original']} → {data['compressed']} ({data['saved_pct']}% 절감)")
 
     elif args.command == "tree":
-        files = collect_files(args.path)
+        files = collect_files(args.path, **_collection_kwargs(args.path))
         scan_result = scan_files(files)
         safe_files = scan_result["safe"]
 
@@ -257,7 +278,7 @@ def main():
         print_dependency_tree(tree)
 
     elif args.command == "search":
-        files = collect_files(args.path)
+        files = collect_files(args.path, **_collection_kwargs(args.path))
         scan_result = scan_files(files)
         safe_files = scan_result["safe"]
 
@@ -295,7 +316,7 @@ def main():
         with open(args.cache_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
 
-        files = collect_files(args.path)
+        files = collect_files(args.path, **_collection_kwargs(args.path))
         safe_files = scan_files(files)["safe"]
         report = check_freshness(safe_files, args.path, manifest)
 
@@ -314,6 +335,12 @@ def main():
         target = export_skill(args.aif_path, args.output)
         print(f"✅ Skill 내보내기 완료: {target}")
         print("   Claude Code가 자동으로 인식하려면 프로젝트 루트의 .claude/skills/ 아래에 있어야 합니다.")
+
+    elif args.command == "init":
+        existed = (Path(args.path) / CONFIG_FILENAME).exists()
+        target = init_config(args.path)
+        print(f"✅ .ziplex.json {'이미 있음' if existed else '생성됨'}: {target}")
+        print('   예시: {"include": ["src/**/*.py"], "ignore": ["**/*.generated.*"]}')
 
 if __name__ == "__main__":
     main()
