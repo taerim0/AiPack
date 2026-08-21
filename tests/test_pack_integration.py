@@ -59,6 +59,53 @@ def test_pack_runs_end_to_end_with_mock_provider(tmp_path, monkeypatch):
     assert set(aif["_manifest"].keys()) == {"main.py", "README.md"}
 
 
+def test_pack_use_llm_false_never_calls_the_llm_and_uses_structural_summaries(tmp_path, monkeypatch):
+    # A provider that raises on any call at all -- stricter than counting
+    # calls after the fact, since a call this test doesn't expect fails
+    # immediately at the point it happens rather than only being caught by
+    # a final assertion.
+    class _RaisingProvider(llm.MockProvider):
+        def generate(self, prompt: str, retry: int = 5) -> str:
+            raise AssertionError("use_llm=False must never call the LLM provider")
+
+    monkeypatch.setattr(llm, "_provider", _RaisingProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "README.md", "# Sample\n\nA sample project.\n")
+
+    aif = packager.pack(str(project), auto=True, interactive=False, use_llm=False)
+
+    assert aif["files"]["main.py"]["summary"] == "Defines: add(a, b)"
+    # README.md has no Tree-sitter grammar -> no signatures/dependencies at all
+    assert "No signatures or dependencies detected" in aif["files"]["README.md"]["summary"]
+    assert aif["rules"] == []
+    assert aif["project"]["prompt"] == packager.STRUCTURAL_ONLY_NOTE
+
+
+def test_pack_use_llm_false_still_reuses_a_cached_real_summary(tmp_path, monkeypatch):
+    # use_llm=False means "don't call the LLM now," not "throw away a
+    # better answer already on hand" -- a file unchanged since a prior
+    # LLM-enabled pack should keep that real summary, not get downgraded.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    packager.save_aif(packager.pack(str(project), auto=True, interactive=False))
+
+    class _RaisingProvider(llm.MockProvider):
+        def generate(self, prompt: str, retry: int = 5) -> str:
+            raise AssertionError("use_llm=False must never call the LLM provider")
+
+    monkeypatch.setattr(llm, "_provider", _RaisingProvider())
+    aif = packager.pack(str(project), auto=True, interactive=False, use_llm=False)
+
+    assert aif["files"]["main.py"]["summary"] == "Mock summary for local testing."
+
+
 def test_pack_attaches_tech_stack_detected_from_a_manifest_file(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")

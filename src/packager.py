@@ -19,12 +19,23 @@ import summarizer
 
 RESULT_DIR = Path(__file__).parent.parent / "result"
 
+# The AI-guide text a structural-only pack (use_llm=False) ships in place of
+# an actual analyze_prompt() result -- so a reader (human or agent) sees why
+# `project.prompt` reads like this instead of assuming the pack half-failed.
+STRUCTURAL_ONLY_NOTE = (
+    "This is a structural-only pack (--no-llm): no AI guide or coding-rule "
+    "inference was run, and each file's summary is a deterministic listing "
+    "of its own extracted signatures/dependencies, not an LLM-written "
+    "description of what the file does."
+)
+
 
 def pack(
     root_path: str,
     auto: bool = False,
     interactive: bool = True,
     use_cache: bool = True,
+    use_llm: bool = True,
     preselected: list[str] | None = None,
     include: list[str] | None = None,
     ignore: list[str] | None = None,
@@ -70,6 +81,26 @@ def pack(
     unchanged file's dependency data; a fresh pack always rebuilds
     `relationships` from scratch regardless of this flag, same as before
     incremental reuse existed.
+
+    use_llm=False (CLI: `pack --no-llm`) skips every LLM call entirely --
+    no GEMINI_API_KEY, no network, no Gemini rate limits -- for the
+    "structural-only" mode floated as a mitigation for the biggest
+    non-developer onboarding barrier (getting an API key at all; see the
+    `ziplex-roadmap` memory's target-audience discussion). Everything
+    Tree-sitter/regex-based already runs unaffected (extraction,
+    compression, tech_stack detection, the dependency graph); only the
+    three LLM-touching steps change: each file's `summary` comes from
+    summarizer.generate_structural_summaries() instead (a deterministic
+    listing of its own signatures/dependencies -- see that function's
+    docstring for exactly why this isn't pretending to be a real
+    description), `rules` stays `[]` (nothing to infer without an LLM
+    reading signature patterns), and `prompt` becomes STRUCTURAL_ONLY_NOTE
+    instead of an AI-written guide, so a reader sees *why* those fields
+    look like this rather than assuming the pack half-failed. use_cache
+    still applies independently -- a file whose previous *real* summary is
+    still fresh gets that reused rather than downgraded to a structural
+    placeholder, since reusing a better answer already on hand is strictly
+    an improvement, not a contradiction of "don't call the LLM now."
     """
     root = Path(root_path)
 
@@ -174,19 +205,26 @@ def pack(
         else:
             print(f"  ✅ {name}")
 
-    # 5. LLM analysis
-    # Each file's summary is human-reviewed/corrected in correct_aif() later
-    # (triaged by confidence -- see below -- so review effort scales with how
-    # many summaries actually look suspicious, not with project size), so
-    # this skips the retry menu: try each file once in parallel (see
-    # summarizer.generate_summaries) and fill failures with a placeholder (a
-    # wrong summary still gets fixed in the next step).
-    print("\n🤖 LLM 분석 중...")
+    # 5. Summary generation -- LLM-based (the default) or, with use_llm=False,
+    # a deterministic structural fallback that never touches the network at
+    # all (see this function's own docstring for the full use_llm story).
+    # Each LLM-generated summary is human-reviewed/corrected in
+    # correct_aif() later (triaged by confidence -- see below -- so review
+    # effort scales with how many summaries actually look suspicious, not
+    # with project size), so this skips the retry menu: try each file once
+    # in parallel (see summarizer.generate_summaries) and fill failures with
+    # a placeholder (a wrong summary still gets fixed in the next step).
     pending = {
         fp: data for fp, data in files_data.items() if not data.get("summary")
     }
-    for fp, summary in summarizer.generate_summaries(pending, root).items():
-        files_data[fp]["summary"] = summary
+    if use_llm:
+        print("\n🤖 LLM 분석 중...")
+        for fp, summary in summarizer.generate_summaries(pending, root).items():
+            files_data[fp]["summary"] = summary
+    else:
+        print("\n📐 구조 정보만으로 요약 생성 중 (--no-llm, LLM 미사용)...")
+        for fp, summary in summarizer.generate_structural_summaries(pending, root).items():
+            files_data[fp]["summary"] = summary
 
     # Only now -- after every summary prompt has already been built from
     # code-only `dependencies` above -- fold in the free text-reference
@@ -207,7 +245,7 @@ def pack(
 
     # extract rules (restored from checkpoint if available)
     rules = restored_rules
-    if not rules:
+    if not rules and use_llm:
         print("  📋 코딩 룰 추출 중...")
         while not rules:
             rules_response = analyze_rules(signatures_map)
@@ -230,12 +268,14 @@ def pack(
                     continue
                 else:
                     rules = [r.strip() for r in result.split(",")]
-    else:
+    elif rules:
         print("  📋 코딩 룰 (체크포인트에서 복원)")
+    else:
+        print("  📋 코딩 룰 추출 건너뜀 (--no-llm)")
 
     # generate prompt (restored from checkpoint if available)
     prompt = restored_prompt
-    if not prompt:
+    if not prompt and use_llm:
         print("  ✍️  AI 가이드 생성 중...")
         while not prompt:
             prompt_response = analyze_prompt(
@@ -262,8 +302,11 @@ def pack(
                     continue
                 else:
                     prompt = result
-    else:
+    elif prompt:
         print("  ✍️  AI 가이드 (체크포인트에서 복원)")
+    else:
+        print("  ✍️  AI 가이드 생성 건너뜀 (--no-llm)")
+        prompt = STRUCTURAL_ONLY_NOTE
 
     # 6. Token counting
     # Compares raw project text against the actual per-file aif.json payload

@@ -72,3 +72,46 @@ def test_generate_summaries_placeholders_a_summary_that_never_comes_back(tmp_pat
     pending = {fp: {"signatures": [], "dependencies": []}}
 
     assert summarizer.generate_summaries(pending, root) == {fp: "요약 생성 실패"}
+
+
+def test_structural_summary_lists_signatures_when_present():
+    data = {"signatures": ["add(a, b)", "sub(a, b)"], "dependencies": ["os"]}
+    # signatures take priority over dependencies when both exist -- they're
+    # the more specific fact
+    assert summarizer._structural_summary(data) == "Defines: add(a, b), sub(a, b)"
+
+
+def test_structural_summary_caps_and_counts_extra_signatures():
+    sigs = [f"fn{i}()" for i in range(8)]
+    result = summarizer._structural_summary({"signatures": sigs, "dependencies": []})
+    assert result == "Defines: fn0(), fn1(), fn2(), fn3(), fn4(), +3 more"
+
+
+def test_structural_summary_falls_back_to_dependencies_when_no_signatures():
+    data = {"signatures": [], "dependencies": ["flask", "os"]}
+    assert summarizer._structural_summary(data) == "References: flask, os"
+
+
+def test_structural_summary_falls_back_to_a_fixed_note_when_neither_exists():
+    data = {"signatures": [], "dependencies": []}
+    assert summarizer._structural_summary(data) == (
+        "No signatures or dependencies detected (structural-only mode, no LLM summary)."
+    )
+
+
+def test_generate_structural_summaries_returns_one_summary_per_pending_file(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    fp_a = str(root / "a.py")
+    fp_b = str(root / "b.py")
+    pending = {
+        fp_a: {"signatures": ["add()"], "dependencies": []},
+        fp_b: {"signatures": [], "dependencies": []},
+    }
+
+    result = summarizer.generate_structural_summaries(pending, root)
+
+    assert result == {
+        fp_a: "Defines: add()",
+        fp_b: "No signatures or dependencies detected (structural-only mode, no LLM summary).",
+    }

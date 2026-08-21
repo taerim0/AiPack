@@ -4,11 +4,17 @@ pending files into fewer, larger LLM requests (see llm.analyze_batch_
 summaries), and falling back to a per-file request for anything a batch
 response didn't cover.
 
-generate_summaries() is the entry point pack() actually calls; the smaller
-functions below it (chunked/request_summary/request_batch_summaries) are
-exposed too, both because pack() doesn't need the batching/threading detail
-and because tests exercise them directly without spinning up a whole pack()
-run.
+generate_summaries() is the entry point pack() actually calls when an LLM
+is available; the smaller functions below it (chunked/request_summary/
+request_batch_summaries) are exposed too, both because pack() doesn't need
+the batching/threading detail and because tests exercise them directly
+without spinning up a whole pack() run.
+
+generate_structural_summaries() is the LLM-free alternative pack(...,
+use_llm=False) calls instead -- see its own docstring for why it lives
+here rather than a separate module: this file's actual subject is "how does
+pack() get its per-file summaries," and a deterministic fallback is a
+second answer to that same question, not an unrelated concern.
 
 Reusing a previous pack's summary for an unchanged file (staleness stage 2)
 is deliberately *not* here -- that's freshness.load_previous_summaries(),
@@ -123,4 +129,57 @@ def generate_summaries(pending: dict[str, dict], root: Path) -> dict[str, str]:
                 fp = name_to_fp[name]
                 results[fp] = summary or "요약 생성 실패"
                 print(f"  ✅ {name}")
+    return results
+
+
+# Cap on how many signature/dependency names a structural summary lists
+# before collapsing the rest into "+N more" -- matches corrector.py's own
+# cap on a flagged file's shown signatures (_SIGNATURES_SHOWN in
+# pack_service.py), same reasoning: enough to be useful, not a full dump.
+_STRUCTURAL_SUMMARY_SHOWN = 5
+
+
+def _structural_summary(data: dict) -> str:
+    """A summary with no LLM involved at all: just what extract_signatures()/
+    extract_dependencies() already found, formatted as one line. Not a
+    description of what the file *does* (that's exactly the part only an
+    LLM -- or a human -- can actually judge) -- a plain listing of what's
+    there, which is still strictly more useful than an empty string.
+    """
+    sigs = data.get("signatures") or []
+    if sigs:
+        shown = ", ".join(sigs[:_STRUCTURAL_SUMMARY_SHOWN])
+        if len(sigs) > _STRUCTURAL_SUMMARY_SHOWN:
+            shown += f", +{len(sigs) - _STRUCTURAL_SUMMARY_SHOWN} more"
+        return f"Defines: {shown}"
+
+    deps = data.get("dependencies") or []
+    if deps:
+        shown = ", ".join(deps[:_STRUCTURAL_SUMMARY_SHOWN])
+        if len(deps) > _STRUCTURAL_SUMMARY_SHOWN:
+            shown += f", +{len(deps) - _STRUCTURAL_SUMMARY_SHOWN} more"
+        return f"References: {shown}"
+
+    return "No signatures or dependencies detected (structural-only mode, no LLM summary)."
+
+
+def generate_structural_summaries(pending: dict[str, dict], root: Path) -> dict[str, str]:
+    """The use_llm=False counterpart to generate_summaries() -- same
+    signature (pending, root), no network call, no batching, no retry:
+    every entry in `pending` ({file path: data}) gets a summary built purely
+    from its own already-extracted signatures/dependencies (see
+    _structural_summary()). Synchronous and effectively instant, so there's
+    no thread pool here the way generate_summaries() needs one to hide LLM
+    request latency.
+
+    Returns {file path: summary} -- same keys as `pending`, same contract
+    generate_summaries() follows, so pack() can call either one
+    interchangeably depending on use_llm. `root` is only used for the
+    printed progress line's relative name, matching generate_summaries()'s
+    own output -- not for anything in the summary text itself.
+    """
+    results = {}
+    for fp, data in pending.items():
+        results[fp] = _structural_summary(data)
+        print(f"  ✅ {_rel_key(fp, root)}")
     return results

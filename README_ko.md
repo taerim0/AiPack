@@ -47,6 +47,7 @@ project/  ──►  수집  ──►  보안 스캔  ──►  선택  ──
 - **`include`/`ignore` glob 패턴으로 패킹 범위 지정** — 일회성으로는 `--include`/`--ignore`, 프로젝트별로 고정하고 싶으면 `.ziplex.json`(`init`으로 생성)에 — 큰 저장소라고 해서 파일을 일일이 클릭하거나 전부(`--auto`) 둘 중 하나만 있는 게 아닙니다.
 - **기술 스택 자동 감지 (무료)** — 프로젝트 루트의 `package.json`/`requirements.txt`/`pyproject.toml`/`Cargo.toml`/`go.mod`/`Gemfile`/`composer.json`/`pom.xml`을 직접 읽어(LLM 호출 없음) 선언된 의존성을 뽑아내고, `aif.json`의 `project.tech_stack`으로 담아냅니다 — LLM이 코드 형태로부터 추론하는 `rules`와 달리 매니페스트 기반의 확정적 사실입니다.
 - **CI용 토큰 예산 가드** — `pack --max-tokens N`을 주면 패킹 결과가 지정한 모델 기준 N 토큰을 넘을 때 종료 코드 1로 실패해서, 컨텍스트 예산 초과가 조용히 넘어가지 않고 빌드 실패로 드러납니다.
+- **API 키 없이 쓰는 구조 전용 모드** — `pack --no-llm`은 LLM 호출을 아예 하지 않습니다 (`GEMINI_API_KEY`도, 네트워크도 불필요). 각 파일의 요약은 LLM이 쓴 설명 대신 추출된 시그니처/의존성을 그대로 나열한 결정적인 문장이 되고, `rules`와 AI 가이드는 가짜로 채우지 않고 아예 건너뜁니다. Tree-sitter/정규식 기반 단계(추출, 압축, 의존성 그래프, 기술 스택 감지)는 평소와 똑같이 동작합니다.
 
 ## 빠른 시작
 
@@ -82,6 +83,9 @@ python src/cli.py pack ./your-project/ --include "src/**/*.py,*.md" --ignore "**
 
 # CI 가드: 패킹 결과가 GPT-4o 기준 50,000 토큰을 넘으면 종료 코드 1
 python src/cli.py pack ./your-project/ --auto --auto-correct --max-tokens 50000
+
+# GEMINI_API_KEY 없이 -- 구조 정보만으로 요약, rules/AI 가이드 없음
+python src/cli.py pack ./your-project/ --auto --no-llm
 ```
 
 전에 한 번 pack한 프로젝트를 다시 pack하면, 실제로 내용이 바뀐 파일(콘텐츠 해시 기준)만 다시 요약합니다 — 나머지는 이전 요약을 그대로 재사용해서 LLM을 다시 호출하지 않습니다.

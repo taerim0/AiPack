@@ -94,6 +94,8 @@ def main():
     p.add_argument("--auto", action="store_true", help="파일 자동 선택 (전체 안전 파일 포함)")
     p.add_argument("--auto-correct", action="store_true", help="LLM 결과 자동 승인 (대화형 보정 건너뜀)")
     p.add_argument("--no-cache", action="store_true", help="변경 없는 파일도 요약을 다시 생성 (이전 pack 재사용 끄기)")
+    p.add_argument("--no-llm", action="store_true",
+                    help="LLM 호출 없이 구조 정보(시그니처/의존성)만으로 패킹 -- GEMINI_API_KEY 불필요, rules/AI 가이드는 생성되지 않음")
     p.add_argument("--include", default=None, help="포함할 glob 패턴, 쉼표로 구분 (예: 'src/**/*.py,*.md') -- .ziplex.json의 include에 추가됨")
     p.add_argument("--ignore", default=None, help="추가로 제외할 glob 패턴, 쉼표로 구분 -- .ziplex.json의 ignore에 추가됨")
     p.add_argument("--max-tokens", type=int, default=None, metavar="N",
@@ -256,6 +258,7 @@ def main():
         # keeps failing inside pack() itself (see handle_llm_failure).
         aif = pack(
             args.path, auto=args.auto, interactive=not args.auto_correct, use_cache=not args.no_cache,
+            use_llm=not args.no_llm,
             include=_split_patterns(args.include),
             ignore=_split_patterns(args.ignore),
         )

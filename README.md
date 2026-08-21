@@ -47,6 +47,7 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 - **Claude Agent Skill export** — turn an already-packed project into a `.claude/skills/` directory Claude Code discovers and progressively loads on its own, no MCP server required (see [Claude Agent Skill export](#claude-agent-skill-export) below).
 - **Tech stack detection, for free** — `package.json`/`requirements.txt`/`pyproject.toml`/`Cargo.toml`/`go.mod`/`Gemfile`/`composer.json`/`pom.xml` at the project root are read directly (no LLM call) for declared dependencies, shipped as `aif.json`'s `project.tech_stack` — a direct fact alongside `rules`' LLM-inferred conventions, not a replacement for them.
 - **CI token-budget guard** — `pack --max-tokens N` fails with a non-zero exit code if the packed payload exceeds `N` tokens for a chosen model, so a context budget regression fails a build instead of shipping silently.
+- **Structural-only mode, no API key needed** — `pack --no-llm` skips every LLM call entirely (no `GEMINI_API_KEY`, no network): each file's summary becomes a deterministic listing of its own extracted signatures/dependencies instead of an LLM-written description, and `rules`/the AI guide are skipped rather than faked. Every Tree-sitter/regex-based step (extraction, compression, the dependency graph, tech stack detection) still runs exactly as normal.
 
 ## Quick start
 
@@ -82,6 +83,9 @@ python src/cli.py pack ./your-project/ --include "src/**/*.py,*.md" --ignore "**
 
 # CI guard: exit code 1 if the packed payload exceeds 50,000 GPT-4o tokens
 python src/cli.py pack ./your-project/ --auto --auto-correct --max-tokens 50000
+
+# No GEMINI_API_KEY at all -- structural summaries only, no rules/AI guide
+python src/cli.py pack ./your-project/ --auto --no-llm
 ```
 
 Re-running `pack` on a project you've packed before only re-summarizes files that actually changed (by content hash) — everything else reuses its previous summary instead of another LLM call.
