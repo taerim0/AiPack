@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from skill_export import _slugify, generate_skill_files, export_skill
+from skill_export import _slugify, _yaml_double_quoted, generate_skill_files, export_skill
 
 
 def _sample_aif():
@@ -51,6 +51,27 @@ def test_skill_md_has_valid_frontmatter_and_mentions_the_project():
     assert "references/files.md" in skill_md
     assert "references/relationships.md" in skill_md
     assert "references/detail.json" in skill_md
+
+
+def test_yaml_double_quoted_escapes_quotes_backslashes_and_newlines():
+    assert _yaml_double_quoted('He said "hi"') == 'He said \\"hi\\"'
+    assert _yaml_double_quoted("back\\slash") == "back\\\\slash"
+    assert _yaml_double_quoted("line1\nline2") == "line1\\nline2"
+
+
+def test_skill_md_escapes_a_quote_in_the_project_name():
+    # An unescaped `"` from a project renamed to include one (corrector.py/
+    # the GUI's set_project_name don't validate the new name) would
+    # otherwise truncate the YAML frontmatter's description value early.
+    aif = _sample_aif()
+    aif["project"]["name"] = 'My "Weird" App'
+    files = generate_skill_files(aif, {})
+    skill_md = files["SKILL.md"]
+
+    desc_line = next(line for line in skill_md.splitlines() if line.startswith("description:"))
+    without_escaped_quotes = desc_line.replace('\\"', "")
+    # only the two frontmatter-delimiting quotes should remain unescaped
+    assert without_escaped_quotes.count('"') == 2
 
 
 def test_files_md_lists_every_file_sorted_with_escaped_summary():

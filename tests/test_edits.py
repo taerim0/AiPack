@@ -5,6 +5,7 @@ from edits import (
     set_project_prompt,
     add_rule,
     remove_rule,
+    set_rules,
     set_file_summary,
     finalize_aif,
 )
@@ -54,6 +55,18 @@ def test_remove_rule_out_of_range_raises():
     aif = _make_aif()
     with pytest.raises(IndexError):
         remove_rule(aif, 5)
+
+
+def test_set_rules_replaces_the_whole_list():
+    aif = _make_aif()
+    set_rules(aif, ["brand new rule", "another one"])
+    assert aif["rules"] == ["brand new rule", "another one"]
+
+
+def test_set_rules_with_empty_list_clears_rules():
+    aif = _make_aif()
+    set_rules(aif, [])
+    assert aif["rules"] == []
 
 
 def test_set_file_summary():

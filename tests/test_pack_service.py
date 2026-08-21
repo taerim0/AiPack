@@ -211,6 +211,31 @@ def test_has_reviewing_job_reflects_job_state(tmp_path, monkeypatch):
     assert pack_service.has_reviewing_job() is False
 
 
+def test_start_pack_job_evicts_oldest_finished_jobs_past_the_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(pack_service, "_jobs", {})
+    monkeypatch.setattr(pack_service, "_MAX_FINISHED_JOBS", 2)
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    job_ids = []
+    for _ in range(4):
+        job_id = pack_service.start_pack_job(str(project), selected_files=["main.py"])
+        _wait(job_id)
+        pack_service.cancel_job(job_id)  # -> "error" state, i.e. "finished"
+        job_ids.append(job_id)
+
+    # cap is 2, and starting a new job also runs eviction -- by the time the
+    # 4th job is inserted, 3 finished jobs already exist ahead of it, so the
+    # oldest (job_ids[0]) should have fallen off.
+    assert pack_service.get_job_status(job_ids[0]) is None
+    assert pack_service.get_job_status(job_ids[1]) is not None
+    assert pack_service.get_job_status(job_ids[2]) is not None
+    assert pack_service.get_job_status(job_ids[3]) is not None
+
+
 def test_review_includes_a_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")

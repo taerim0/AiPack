@@ -105,6 +105,18 @@ def api_config():
     return jsonify(_default_config)
 
 
+def _project_dir_error(project_path: str):
+    """None if project_path is a real directory, else the (jsonify, status)
+    tuple a route should return as-is -- shared by every route that takes a
+    project_path directly (as opposed to an aif_path already validated by
+    query_service's own OSError handling), so the same typo'd-path message
+    doesn't need re-typing at each call site.
+    """
+    if not Path(project_path).is_dir():
+        return jsonify({"error": f"프로젝트 폴더를 찾을 수 없습니다: {project_path}"}), 404
+    return None
+
+
 @app.route("/api/select_files")
 def api_select_files():
     """The read-only step before a pack job exists: collect + security-scan
@@ -113,8 +125,9 @@ def api_select_files():
     select_files()'s terminal picker. See pack_service.list_selectable_files().
     """
     project_path = request.args["project_path"]
-    if not Path(project_path).is_dir():
-        return jsonify({"error": f"프로젝트 폴더를 찾을 수 없습니다: {project_path}"}), 404
+    error = _project_dir_error(project_path)
+    if error:
+        return error
     return jsonify(pack_service.list_selectable_files(project_path))
 
 
@@ -131,8 +144,9 @@ def api_pack_start():
     project_path = (data.get("project_path") or "").strip()
     if not project_path:
         return jsonify({"error": "project_path가 필요합니다"}), 400
-    if not Path(project_path).is_dir():
-        return jsonify({"error": f"프로젝트 폴더를 찾을 수 없습니다: {project_path}"}), 404
+    error = _project_dir_error(project_path)
+    if error:
+        return error
 
     selected_files = data.get("selected_files")
     if not selected_files:

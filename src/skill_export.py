@@ -24,6 +24,21 @@ import json
 import re
 from pathlib import Path
 
+from query_service import _detail_path
+
+
+def _yaml_double_quoted(s: str) -> str:
+    """Escapes s for embedding inside a YAML double-quoted scalar (SKILL.md's
+    frontmatter `description` field). A project renamed (corrector.py or the
+    GUI's set_project_name, neither of which validates the new name) to
+    include a literal double-quote or newline would otherwise truncate or
+    corrupt the YAML, breaking Claude Code's ability to load the generated
+    skill at all -- backslash has to be escaped first, or escaping the other
+    characters would introduce backslashes that then look like part of the
+    original text instead of an escape sequence.
+    """
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
+
 
 def _slugify(name: str) -> str:
     """Lowercase, non-alnum runs collapsed to one hyphen, trimmed -- Claude
@@ -49,7 +64,7 @@ def _skill_md(aif: dict, slug: str) -> str:
 
     return f"""---
 name: {slug}
-description: "{description}"
+description: "{_yaml_double_quoted(description)}"
 ---
 
 # {name} — Ziplex reference
@@ -145,11 +160,13 @@ def generate_skill_files(aif: dict, detail: dict) -> dict[str, str]:
 
 
 def export_skill(aif_path: str, output_dir: str | None = None) -> str:
-    """Loads aif_path (+ its sibling <name>.detail.json, same convention
-    query_service.py's _detail_path derives) and writes a Claude Agent
-    Skill directory -- output_dir if given, else .claude/skills/<slugified
-    project name>/ relative to the current working directory, which is
-    where Claude Code looks for project-level skills.
+    """Loads aif_path (+ its sibling <name>.detail.json, via query_service's
+    own _detail_path() rather than re-deriving that convention independently
+    here -- one definition of the sibling-file naming, reused, not copied)
+    and writes a Claude Agent Skill directory -- output_dir if given, else
+    .claude/skills/<slugified project name>/ relative to the current
+    working directory, which is where Claude Code looks for project-level
+    skills.
 
     A missing/unreadable detail.json degrades to an empty {} rather than
     failing the whole export -- references/detail.json just comes out
@@ -162,9 +179,8 @@ def export_skill(aif_path: str, output_dir: str | None = None) -> str:
     with open(aif_file, "r", encoding="utf-8") as f:
         aif = json.load(f)
 
-    detail_path = aif_file.with_name(f"{aif_file.stem}.detail.json")
     try:
-        with open(detail_path, "r", encoding="utf-8") as f:
+        with open(_detail_path(aif_path), "r", encoding="utf-8") as f:
             detail = json.load(f)
     except (OSError, json.JSONDecodeError):
         detail = {}

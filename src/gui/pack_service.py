@@ -72,9 +72,9 @@ import uuid
 from pathlib import Path
 
 import packager
-from config import load_config
+from config import collection_kwargs
 from confidence import triage
-from edits import finalize_aif, set_file_summary, set_project_name, set_project_prompt
+from edits import finalize_aif, set_file_summary, set_project_name, set_project_prompt, set_rules
 from file.collector import collect_files
 from file.relationship import add_dependency as _add_dependency
 from file.relationship import build_tree
@@ -84,6 +84,36 @@ from file.textutil import relative_key as _rel_key
 
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()  # guards _jobs itself (insert/lookup) only -- see module docstring
+
+# Bounds memory in a long-running GUI session -- a single-user local tool
+# has no other trigger (no request ever asks to delete a finished job) to
+# clean these up, and each one carries a full print()-captured log.
+_MAX_FINISHED_JOBS = 20
+
+
+def _evict_old_finished_jobs():
+    """Must be called with _jobs_lock already held (start_pack_job() holds
+    it for the insert anyway). Keeps at most _MAX_FINISHED_JOBS done/error
+    jobs around, evicting the oldest first (dict insertion order, since
+    _jobs entries are never reordered) -- jobs still running/reviewing/
+    finalizing are never evicted regardless of count.
+
+    Reads each job's own state under its own lock -- the same discipline
+    has_reviewing_job() already follows -- since state is only ever *set*
+    under job["lock"] elsewhere; the one race this still allows (evicting a
+    job that finishes right after this check ran) is harmless, just
+    deferred to the next call.
+    """
+    finished_ids = []
+    for jid, job in _jobs.items():
+        with job["lock"]:
+            state = job["state"]
+        if state in ("done", "error"):
+            finished_ids.append(jid)
+    excess = len(finished_ids) - _MAX_FINISHED_JOBS
+    if excess > 0:
+        for jid in finished_ids[:excess]:
+            del _jobs[jid]
 
 # contextlib.redirect_stdout reassigns the single process-wide sys.stdout,
 # which isn't thread-safe on its own: two jobs whose print()-capturing
@@ -155,8 +185,7 @@ def list_selectable_files(project_path: str) -> dict:
     collect_files() call wouldn't have produced it either, so it just
     silently wouldn't match anything in `preselected`.
     """
-    project_config = load_config(project_path)
-    files = collect_files(project_path, include=project_config["include"] or None, ignore=project_config["ignore"] or None)
+    files = collect_files(project_path, **collection_kwargs(project_path))
     scan_result = scan_files(files)
     return {
         "safe": sorted(_rel_key(f, project_path) for f in scan_result["safe"]),
@@ -255,6 +284,7 @@ def start_pack_job(
     }
     with _jobs_lock:
         _jobs[job_id] = job
+        _evict_old_finished_jobs()
     thread = threading.Thread(
         target=_run, args=(job, project_path, no_cache, selected_files or []), daemon=True
     )
@@ -441,7 +471,7 @@ def submit_review(
         if project_prompt:
             set_project_prompt(aif, project_prompt)
         if rules is not None:
-            aif["rules"] = list(rules)
+            set_rules(aif, rules)
         for name, summary in (summaries or {}).items():
             if summary and name in aif["files"]:
                 set_file_summary(aif, name, summary)

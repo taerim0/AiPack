@@ -16,18 +16,20 @@ from file.relationship import build_tree, print_tree as print_dependency_tree
 from search import search_files, read_detail_range
 from freshness import check_freshness
 from skill_export import export_skill
-from config import load_config, init_config, CONFIG_FILENAME
+from config import init_config, CONFIG_FILENAME, collection_kwargs as _collection_kwargs
 
 
-def _collection_kwargs(path: str) -> dict:
-    """include/ignore kwargs for collect_files(), sourced from path's
-    .ziplex.json (config.py) -- shared by every subcommand below that
-    previews some slice of what `pack` itself would collect, so none of
-    them drift out of sync with what a project's own config actually scopes
-    pack to.
+def _split_patterns(value: str | None) -> list[str] | None:
+    """Splits a --include/--ignore CLI value on "," into a pattern list,
+    stripping whitespace around each one -- "src/**/*.py, *.md" (a space
+    after the comma, a natural way to type the list) would otherwise leave
+    " *.md" as a literal leading-space pattern that pathspec matches nothing
+    against, silently dropping every intended file with no error. None stays
+    None (no flag given), matching collect_files()'s own "no filter" default.
     """
-    cfg = load_config(path)
-    return {"include": cfg["include"] or None, "ignore": cfg["ignore"] or None}
+    if not value:
+        return None
+    return [p.strip() for p in value.split(",") if p.strip()]
 
 
 def main():
@@ -230,8 +232,8 @@ def main():
         # keeps failing inside pack() itself (see handle_llm_failure).
         aif = pack(
             args.path, auto=args.auto, interactive=not args.auto_correct, use_cache=not args.no_cache,
-            include=args.include.split(",") if args.include else None,
-            ignore=args.ignore.split(",") if args.ignore else None,
+            include=_split_patterns(args.include),
+            ignore=_split_patterns(args.ignore),
         )
         if aif:
             if args.auto_correct:

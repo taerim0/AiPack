@@ -507,10 +507,26 @@ function renderRelationshipEditor(tree, allFiles, onLink, onUnlink, initialSelec
   // Everyone whose own `internal` list points at `name` -- the tree only
   // records outgoing edges per file, so "who depends on me" (shown as the
   // graph's left/parent side) has to be derived by scanning every file
-  // rather than looked up directly.
-  function dependentsOf(name) {
-    return allFiles.filter(f => (currentTree[f]?.internal || []).includes(name));
+  // rather than looked up directly. Precomputed once per currentTree
+  // (buildReverseDeps(), called on setup and again in setTree()) instead of
+  // rescanning allFiles from dependentsOf() itself -- drawList() calls it
+  // once per visible row, and the search box's "input" listener re-runs
+  // drawList() on every keystroke, so an O(n) scan per row made a full
+  // relationship-editor redraw O(n²) in the file count.
+  let reverseDeps = new Map();
+  function buildReverseDeps() {
+    reverseDeps = new Map();
+    for (const f of allFiles) {
+      for (const dep of currentTree[f]?.internal || []) {
+        if (!reverseDeps.has(dep)) reverseDeps.set(dep, []);
+        reverseDeps.get(dep).push(f);
+      }
+    }
   }
+  function dependentsOf(name) {
+    return reverseDeps.get(name) || [];
+  }
+  buildReverseDeps();
 
   function selectFile(name) {
     selected = name;
@@ -595,7 +611,7 @@ function renderRelationshipEditor(tree, allFiles, onLink, onUnlink, initialSelec
 
   return {
     el: box,
-    setTree: (tree) => { currentTree = tree; drawList(); drawDetail(); },
+    setTree: (tree) => { currentTree = tree; buildReverseDeps(); drawList(); drawDetail(); },
   };
 }
 

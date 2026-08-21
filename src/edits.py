@@ -2,10 +2,11 @@
 
 Every function here takes plain data and returns plain data -- no input()/
 print(), no terminal assumptions. This is the seam `corrector.py`'s
-interactive CLI flow is built on top of, and the one a future MCP server or
-GUI backend would call directly with structured requests instead of parsed
-terminal strings. See file/relationship.py for the equivalent pure API over
-the dependency graph itself (build_tree, move_file, has_cycle).
+interactive CLI flow is built on top of, and the one `gui/pack_service.py`'s
+review flow calls directly with structured requests (a whole submitted form)
+instead of parsed terminal strings (one prompt answered at a time). See
+file/relationship.py for the equivalent pure API over the dependency graph
+itself (build_tree, move_file, has_cycle).
 
 Each function mutates its `aif`/`aif["files"]` argument in place and also
 returns it, matching the mutate-and-return style already used by
@@ -34,6 +35,19 @@ def add_rule(aif: dict, rule: str) -> dict:
 def remove_rule(aif: dict, index: int) -> dict:
     """index is 0-based. Raises IndexError if out of range."""
     aif["rules"].pop(index)
+    return aif
+
+
+def set_rules(aif: dict, rules: list[str]) -> dict:
+    """Replaces the whole rules list at once -- add_rule()/remove_rule()
+    above are the one-at-a-time API corrector.py's turn-by-turn terminal
+    prompt is built on; a caller that already has the final list in hand
+    (gui/pack_service.py's review screen submits one whole edited array, not
+    a sequence of individual add/remove actions) uses this instead, so a
+    rules edit still goes through edits.py's seam like every other field
+    rather than mutating aif["rules"] directly.
+    """
+    aif["rules"] = list(rules)
     return aif
 
 

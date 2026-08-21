@@ -12,7 +12,7 @@ from tokenizer import analyze_tokens_with_payload
 from llm import analyze_file_summary, analyze_text_summary, analyze_batch_summaries, analyze_rules, analyze_prompt
 from freshness import build_manifest, check_freshness
 from confidence import estimate_confidence
-from config import load_config
+from config import collection_kwargs
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
 RESULT_DIR = Path(__file__).parent.parent / "result"
@@ -271,10 +271,7 @@ def pack(
 
     # 1. Collect files
     print("\n📁 파일 수집 중...")
-    project_config = load_config(root_path)
-    combined_include = (project_config["include"] or []) + (include or [])
-    combined_ignore = (project_config["ignore"] or []) + (ignore or [])
-    files = collect_files(root_path, include=combined_include or None, ignore=combined_ignore or None)
+    files = collect_files(root_path, **collection_kwargs(root_path, extra_include=include, extra_ignore=ignore))
 
     # 2. Security scan
     print("🔒 보안 스캔 중...")

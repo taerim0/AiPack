@@ -50,6 +50,26 @@ def load_config(project_path: str) -> dict:
     return config
 
 
+def collection_kwargs(project_path: str, extra_include: list[str] | None = None, extra_ignore: list[str] | None = None) -> dict:
+    """Loads project_path's .ziplex.json and returns {"include": ..., "ignore":
+    ...} ready to splat straight into collect_files(project_path,
+    **collection_kwargs(project_path)) -- the one place the "config file
+    unioned with any extra CLI-flag-sourced patterns" merge happens, instead
+    of every caller (cli.py, packager.py, gui/pack_service.py,
+    query_service.py) re-implementing it and risking drift between what each
+    one considers "the project's files" for the same project.
+
+    extra_include/extra_ignore are for a caller with its own additional
+    patterns beyond the config file (pack()'s --include/--ignore CLI flags);
+    omit them entirely for a caller that just wants to respect whatever
+    .ziplex.json already says, which is every other caller.
+    """
+    cfg = load_config(project_path)
+    include = (cfg["include"] or []) + (extra_include or [])
+    ignore = (cfg["ignore"] or []) + (extra_ignore or [])
+    return {"include": include or None, "ignore": ignore or None}
+
+
 def init_config(project_path: str) -> str:
     """Writes a starter .ziplex.json (DEFAULT_CONFIG's empty include/ignore
     -- JSON has no comments, so example patterns can't live inline the way

@@ -23,6 +23,7 @@ from file.scanner import scan_files
 from file.relationship import get_dependents as _get_dependents, get_blast_radius as _get_blast_radius
 from search import search_files, read_detail_range
 from freshness import check_freshness as _check_freshness
+from config import collection_kwargs
 
 
 def _load_json(path: str) -> dict:
@@ -68,7 +69,7 @@ def _stale_warning(project_path: str | None, aif_path: str) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
 
-    files = collect_files(project_path)
+    files = collect_files(project_path, **collection_kwargs(project_path))
     safe_files = scan_files(files)["safe"]
     report = _check_freshness(safe_files, project_path, manifest)
     if not report.is_stale:
@@ -170,9 +171,15 @@ def check_freshness(project_path: str, aif_path: str) -> dict:
     detail.json.) Reports which files changed, were added, were removed, or
     are unchanged since the pack aif_path came from; doesn't fix anything
     itself -- a stale result still means re-running `pack`.
+
+    Re-collects via project_path's own .ziplex.json (config.py) the same way
+    pack() itself would -- otherwise a project scoped with include/ignore
+    patterns would get diffed against its *unscoped* full file tree here,
+    reporting every out-of-scope file as spuriously "added" even
+    immediately after a fresh pack.
     """
     manifest = _load_json(str(_cache_path(aif_path)))
-    files = collect_files(project_path)
+    files = collect_files(project_path, **collection_kwargs(project_path))
     safe_files = scan_files(files)["safe"]
     report = _check_freshness(safe_files, project_path, manifest)
     return {
@@ -191,9 +198,12 @@ def search_project(project_path: str, pattern: str, context_lines: int = 0, igno
     aif.json/detail.json at all: it re-collects and re-security-scans the
     project fresh on every call, straight from project_path, so results are
     always current even if aif.json is stale and secrets are still filtered
-    even if the project changed since the last pack.
+    even if the project changed since the last pack. Also respects
+    project_path's own .ziplex.json include/ignore (config.py), the same
+    scope pack() itself would use -- a file deliberately excluded from
+    packing shouldn't turn up in search results either.
     """
-    files = collect_files(project_path)
+    files = collect_files(project_path, **collection_kwargs(project_path))
     safe_files = scan_files(files)["safe"]
     matches = search_files(safe_files, project_path, pattern, context_lines, ignore_case)
     return [
