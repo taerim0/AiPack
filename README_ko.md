@@ -45,6 +45,8 @@ project/  ──►  수집  ──►  보안 스캔  ──►  선택  ──
 - **CLI 없이 쓰는 로컬 GUI** — 터미널 대신 네이티브 창(또는 일반 브라우저 탭)에서 프로젝트를 패킹하고, 요약을 검토하고, 관계를 편집할 수 있습니다. 같은 GUI가 Claude Code나 MCP를 쓸 수 없는 환경에서 이미 패킹된 프로젝트를 둘러보는 읽기 전용 브라우저 역할도 합니다(아래 [GUI](#gui) 참고).
 - **Claude Agent Skill 내보내기** — 이미 패킹된 프로젝트를 `.claude/skills/` 디렉터리로 만들어서, MCP 서버 없이도 Claude Code가 알아서 점진적으로 불러오게 합니다(아래 [Claude Agent Skill 내보내기](#claude-agent-skill-내보내기) 참고).
 - **`include`/`ignore` glob 패턴으로 패킹 범위 지정** — 일회성으로는 `--include`/`--ignore`, 프로젝트별로 고정하고 싶으면 `.ziplex.json`(`init`으로 생성)에 — 큰 저장소라고 해서 파일을 일일이 클릭하거나 전부(`--auto`) 둘 중 하나만 있는 게 아닙니다.
+- **기술 스택 자동 감지 (무료)** — 프로젝트 루트의 `package.json`/`requirements.txt`/`pyproject.toml`/`Cargo.toml`/`go.mod`/`Gemfile`/`composer.json`/`pom.xml`을 직접 읽어(LLM 호출 없음) 선언된 의존성을 뽑아내고, `aif.json`의 `project.tech_stack`으로 담아냅니다 — LLM이 코드 형태로부터 추론하는 `rules`와 달리 매니페스트 기반의 확정적 사실입니다.
+- **CI용 토큰 예산 가드** — `pack --max-tokens N`을 주면 패킹 결과가 지정한 모델 기준 N 토큰을 넘을 때 종료 코드 1로 실패해서, 컨텍스트 예산 초과가 조용히 넘어가지 않고 빌드 실패로 드러납니다.
 
 ## 빠른 시작
 
@@ -77,6 +79,9 @@ python src/cli.py pack ./your-project/ --no-cache
 
 # 패킹 범위를 원하는 만큼만 -- 한 번만 쓸 거면 플래그로, 계속 쓸 거면 아래 설정 파일로
 python src/cli.py pack ./your-project/ --include "src/**/*.py,*.md" --ignore "**/*.generated.*"
+
+# CI 가드: 패킹 결과가 GPT-4o 기준 50,000 토큰을 넘으면 종료 코드 1
+python src/cli.py pack ./your-project/ --auto --auto-correct --max-tokens 50000
 ```
 
 전에 한 번 pack한 프로젝트를 다시 pack하면, 실제로 내용이 바뀐 파일(콘텐츠 해시 기준)만 다시 요약합니다 — 나머지는 이전 요약을 그대로 재사용해서 LLM을 다시 호출하지 않습니다.
@@ -131,7 +136,10 @@ pytest
 ```jsonc
 // aif.json — 작고 가벼워서 바로 로드되는 파일
 {
-  "project": { "name": "...", "prompt": "..." },
+  "project": {
+    "name": "...", "prompt": "...",
+    "tech_stack": [{ "manifest": "package.json", "language": "JavaScript/TypeScript", "package_manager": "npm", "dependencies": ["react", "..."], "dependencies_truncated": false }]
+  },
   "rules": ["..."],
   "tokens": { "GPT-4o": { "original": 3100, "compressed": 749, "saved_pct": 75.8 } },
   "files": { "src/App.tsx": { "summary": "...", "confidence": 0.83 } },

@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api, debug_tree
@@ -32,6 +33,28 @@ def _split_patterns(value: str | None) -> list[str] | None:
     if not value:
         return None
     return [p.strip() for p in value.split(",") if p.strip()]
+
+
+def _check_max_tokens(aif_tokens: dict, max_tokens: int, model: str) -> tuple[bool, int | None]:
+    """CI-guard check for `pack --max-tokens`: does the packed payload
+    (aif.json's actual per-file token cost, tokenizer.py's "compressed"
+    figure -- see analyze_tokens_with_payload) fit under a budget?
+
+    Returns (passed, actual_count). actual_count is None (and passed is
+    always False) when `model` isn't a key in aif_tokens (aif["tokens"],
+    keyed by tokenizer.MODEL_ENCODINGS) -- lets the caller tell "over
+    budget" apart from "typo'd --max-tokens-model" instead of one silently
+    reading as the other.
+
+    Pure and side-effect-free on purpose (no printing, no sys.exit) so it's
+    directly testable -- main() owns turning the result into CLI output and
+    an exit code.
+    """
+    model_data = aif_tokens.get(model)
+    if model_data is None:
+        return False, None
+    actual = model_data["compressed"]
+    return actual <= max_tokens, actual
 
 
 def main():
@@ -73,6 +96,10 @@ def main():
     p.add_argument("--no-cache", action="store_true", help="변경 없는 파일도 요약을 다시 생성 (이전 pack 재사용 끄기)")
     p.add_argument("--include", default=None, help="포함할 glob 패턴, 쉼표로 구분 (예: 'src/**/*.py,*.md') -- .ziplex.json의 include에 추가됨")
     p.add_argument("--ignore", default=None, help="추가로 제외할 glob 패턴, 쉼표로 구분 -- .ziplex.json의 ignore에 추가됨")
+    p.add_argument("--max-tokens", type=int, default=None, metavar="N",
+                    help="패킹된 aif.json의 파일별 payload가 N 토큰을 넘으면 종료 코드 1로 실패 -- CI에서 컨텍스트 예산 초과를 막는 용도")
+    p.add_argument("--max-tokens-model", default="GPT-4o", metavar="MODEL",
+                    help="--max-tokens 판단 기준 모델 (기본값: GPT-4o, tokenizer.MODEL_ENCODINGS의 키 중 하나)")
 
     tr = sub.add_parser("tree", help="의존성 트리 출력")
     tr.add_argument("path", help="프로젝트 폴더 경로")
@@ -267,6 +294,18 @@ def main():
             print("=" * 50)
             for model, data in aif["tokens"].items():
                 print(f"  {model}: {data['original']} → {data['compressed']} ({data['saved_pct']}% 절감)")
+
+            if args.max_tokens is not None:
+                passed, actual = _check_max_tokens(aif["tokens"], args.max_tokens, args.max_tokens_model)
+                if actual is None:
+                    print(f"\n⚠️  --max-tokens-model '{args.max_tokens_model}'은 알 수 없는 모델입니다"
+                          f" (사용 가능: {', '.join(aif['tokens'].keys())})")
+                    sys.exit(1)
+                elif not passed:
+                    print(f"\n❌ 토큰 예산 초과: {args.max_tokens_model} 기준 {actual:,} > {args.max_tokens:,} (--max-tokens)")
+                    sys.exit(1)
+                else:
+                    print(f"\n✅ 토큰 예산 통과: {args.max_tokens_model} 기준 {actual:,} ≤ {args.max_tokens:,}")
 
     elif args.command == "tree":
         files = collect_files(args.path, **_collection_kwargs(args.path))

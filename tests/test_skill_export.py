@@ -89,6 +89,43 @@ def test_files_md_lists_every_file_sorted_with_escaped_summary():
     assert "0.30" in files_md
 
 
+def test_overview_md_omits_tech_stack_section_when_field_absent():
+    # _sample_aif() has no "tech_stack" key at all -- an aif.json packed
+    # before this field existed. Must not crash or render an empty heading.
+    files = generate_skill_files(_sample_aif(), {})
+    assert "## Tech stack" not in files["references/overview.md"]
+
+
+def test_overview_md_lists_tech_stack_when_present():
+    aif = _sample_aif()
+    aif["project"]["tech_stack"] = [{
+        "manifest": "requirements.txt",
+        "language": "Python",
+        "package_manager": "pip",
+        "dependencies": ["flask", "requests"],
+        "dependencies_truncated": False,
+    }]
+    overview_md = generate_skill_files(aif, {})["references/overview.md"]
+
+    assert "## Tech stack" in overview_md
+    assert "Python" in overview_md
+    assert "requirements.txt" in overview_md
+    assert "flask, requests" in overview_md
+
+
+def test_overview_md_marks_a_truncated_dependency_list():
+    aif = _sample_aif()
+    aif["project"]["tech_stack"] = [{
+        "manifest": "package.json",
+        "language": "JavaScript/TypeScript",
+        "package_manager": "npm",
+        "dependencies": ["react"],
+        "dependencies_truncated": True,
+    }]
+    overview_md = generate_skill_files(aif, {})["references/overview.md"]
+    assert "react, ..." in overview_md
+
+
 def test_relationships_md_shows_internal_external_and_no_deps():
     files = generate_skill_files(_sample_aif(), {})
     rel_md = files["references/relationships.md"]

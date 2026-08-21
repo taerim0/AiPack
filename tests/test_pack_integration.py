@@ -57,6 +57,42 @@ def test_pack_runs_end_to_end_with_mock_provider(tmp_path, monkeypatch):
     assert set(aif["_manifest"].keys()) == {"main.py", "README.md"}
 
 
+def test_pack_attaches_tech_stack_detected_from_a_manifest_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "requirements.txt", "flask>=2.0\nrequests\n")
+
+    aif = packager.pack(str(project), auto=True, interactive=False)
+
+    assert aif["project"]["tech_stack"] == [{
+        "manifest": "requirements.txt",
+        "language": "Python",
+        "package_manager": "pip",
+        "dependencies": ["flask", "requests"],
+        "dependencies_truncated": False,
+    }]
+
+    # survives finalize_aif() the same way project.name/prompt do -- it's
+    # not a per-file field finalize_aif() prunes
+    from edits import finalize_aif
+    assert finalize_aif(aif)["project"]["tech_stack"] == aif["project"]["tech_stack"]
+
+
+def test_pack_attaches_an_empty_tech_stack_when_no_manifest_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    aif = packager.pack(str(project), auto=True, interactive=False)
+
+    assert aif["project"]["tech_stack"] == []
+
+
 def test_pack_captures_a_text_file_reference_to_a_code_file(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")

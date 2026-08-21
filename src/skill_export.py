@@ -96,6 +96,22 @@ def _overview_md(aif: dict) -> str:
         "## Coding rules", "",
     ]
     lines += [f"- {r}" for r in rules] if rules else ["(none inferred)"]
+
+    # Free (no LLM call), manifest-based fact block -- see tech_stack.py.
+    # Older aif.json files packed before this field existed simply have no
+    # "tech_stack" key, so this section is skipped rather than shown empty.
+    tech_stack = project.get("tech_stack")
+    if tech_stack:
+        lines += ["", "## Tech stack", ""]
+        for stack in tech_stack:
+            deps = ", ".join(stack.get("dependencies", []))
+            if stack.get("dependencies_truncated"):
+                deps += ", ..."
+            lines.append(
+                f"- **{stack.get('language')}** ({stack.get('manifest')}, {stack.get('package_manager')})"
+                + (f": {deps}" if deps else "")
+            )
+
     lines += [
         "", "## Token stats", "",
         "This reference (summaries only) vs. the raw original source:", "",

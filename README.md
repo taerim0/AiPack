@@ -45,6 +45,8 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 - **Scope a pack with `include`/`ignore` glob patterns** — one-off via `--include`/`--ignore`, or persisted per-project in a `.ziplex.json` (`init` scaffolds one) so a large repo doesn't mean either clicking through every file or an all-or-nothing `--auto`.
 - **Local GUI, no CLI required** — pack a project, review its summaries, and edit relationships all from a native window (or a plain browser tab) instead of the terminal; the same GUI doubles as a read-only browse/search companion over an already-packed project for anyone without Claude Code or MCP access (see [GUI](#gui) below).
 - **Claude Agent Skill export** — turn an already-packed project into a `.claude/skills/` directory Claude Code discovers and progressively loads on its own, no MCP server required (see [Claude Agent Skill export](#claude-agent-skill-export) below).
+- **Tech stack detection, for free** — `package.json`/`requirements.txt`/`pyproject.toml`/`Cargo.toml`/`go.mod`/`Gemfile`/`composer.json`/`pom.xml` at the project root are read directly (no LLM call) for declared dependencies, shipped as `aif.json`'s `project.tech_stack` — a direct fact alongside `rules`' LLM-inferred conventions, not a replacement for them.
+- **CI token-budget guard** — `pack --max-tokens N` fails with a non-zero exit code if the packed payload exceeds `N` tokens for a chosen model, so a context budget regression fails a build instead of shipping silently.
 
 ## Quick start
 
@@ -77,6 +79,9 @@ python src/cli.py pack ./your-project/ --no-cache
 
 # Scope to just what you want packed -- a one-off flag, or persisted below
 python src/cli.py pack ./your-project/ --include "src/**/*.py,*.md" --ignore "**/*.generated.*"
+
+# CI guard: exit code 1 if the packed payload exceeds 50,000 GPT-4o tokens
+python src/cli.py pack ./your-project/ --auto --auto-correct --max-tokens 50000
 ```
 
 Re-running `pack` on a project you've packed before only re-summarizes files that actually changed (by content hash) — everything else reuses its previous summary instead of another LLM call.
@@ -131,7 +136,10 @@ Want to smoke-test `pack` against a real project without waiting on Gemini? `LLM
 ```jsonc
 // aif.json — small, loaded up front
 {
-  "project": { "name": "...", "prompt": "..." },
+  "project": {
+    "name": "...", "prompt": "...",
+    "tech_stack": [{ "manifest": "package.json", "language": "JavaScript/TypeScript", "package_manager": "npm", "dependencies": ["react", "..."], "dependencies_truncated": false }]
+  },
   "rules": ["..."],
   "tokens": { "GPT-4o": { "original": 3100, "compressed": 749, "saved_pct": 75.8 } },
   "files": { "src/App.tsx": { "summary": "...", "confidence": 0.83 } },

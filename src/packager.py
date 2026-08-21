@@ -14,6 +14,7 @@ from llm import analyze_file_summary, analyze_text_summary, analyze_batch_summar
 from freshness import build_manifest, check_freshness
 from confidence import estimate_confidence
 from config import collection_kwargs
+from tech_stack import detect_tech_stack
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
 RESULT_DIR = Path(__file__).parent.parent / "result"
@@ -484,7 +485,11 @@ def pack(
     aif = {
         "project": {
             "name": root.name,
-            "prompt": prompt
+            "prompt": prompt,
+            # Free (no LLM call), manifest-based fact block -- see
+            # tech_stack.py's own docstring for why this exists alongside
+            # `rules` rather than folding into it.
+            "tech_stack": detect_tech_stack(root_path),
         },
         "rules": rules,
         "tokens": {
