@@ -1,4 +1,4 @@
-from text_references import find_text_references
+from text_references import find_text_references, find_text_references_for_file
 
 
 def test_matches_full_relative_path():
@@ -47,3 +47,24 @@ def test_matches_multiple_distinct_references():
     content = "Uses both player.gd and enemy.gd for the two characters."
     found = find_text_references(content, "README.md", ["entities/player.gd", "entities/enemy.gd", "unrelated.gd"])
     assert set(found) == {"entities/player.gd", "entities/enemy.gd"}
+
+
+def test_for_file_reads_and_scans_a_real_text_file(tmp_path):
+    (tmp_path / "README.md").write_text("See player.gd for details.", encoding="utf-8")
+    found = find_text_references_for_file(str(tmp_path / "README.md"), "README.md", ["player.gd", "other.gd"])
+    assert found == ["player.gd"]
+
+
+def test_for_file_skips_a_file_with_a_tree_sitter_grammar(tmp_path):
+    # a .py file's own dependency_handler already covers it -- re-scanning
+    # its text (comments, strings) on top would risk noisy incidental
+    # matches, so this must return [] without even reading the file's
+    # content for reference purposes.
+    (tmp_path / "app.py").write_text("# see other.py\n", encoding="utf-8")
+    found = find_text_references_for_file(str(tmp_path / "app.py"), "app.py", ["other.py"])
+    assert found == []
+
+
+def test_for_file_returns_empty_list_for_an_unreadable_file(tmp_path):
+    missing = tmp_path / "does_not_exist.md"
+    assert find_text_references_for_file(str(missing), "does_not_exist.md", ["a.gd"]) == []

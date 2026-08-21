@@ -78,6 +78,43 @@ def test_pack_captures_a_text_file_reference_to_a_code_file(tmp_path, monkeypatc
     assert final["relationships"]["README.md"]["internal"] == ["entities/player.gd"]
 
 
+def test_pack_text_reference_does_not_hijack_the_summary_prompt(tmp_path, monkeypatch):
+    # _request_summary()/analyze_batch_summaries() both switch a file's
+    # summary prompt from content-based to signature/dependency-based the
+    # moment `dependencies` is non-empty -- a text-reference match must not
+    # be visible to that decision, or README.md's summary would get
+    # generated from `Dependencies: ['entities/player.gd']` alone, having
+    # never seen its actual text. MockProvider ignores prompt content
+    # entirely, so this needs a provider that records what it was actually
+    # asked, not just that *a* summary came back.
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    captured_prompts = []
+
+    class _CapturingMockProvider(llm.MockProvider):
+        def generate(self, prompt: str, retry: int = 5) -> str:
+            captured_prompts.append(prompt)
+            return super().generate(prompt, retry)
+
+    monkeypatch.setattr(llm, "_provider", _CapturingMockProvider())
+
+    project = tmp_path / "project"
+    _write(project / "entities" / "player.gd", "extends Node\nfunc _ready():\n    pass\n")
+    _write(project / "README.md", "See entities/player.gd for the player logic. UNIQUE_MARKER_TEXT_XYZ\n")
+
+    packager.pack(str(project), auto=True, interactive=False)
+
+    readme_prompts = [p for p in captured_prompts if "README.md" in p]
+    assert readme_prompts, "expected at least one summary-generation prompt mentioning README.md"
+    assert any("UNIQUE_MARKER_TEXT_XYZ" in p for p in readme_prompts), (
+        "README.md's summary prompt should include its actual content (content-based "
+        "routing), not just its signatures/dependencies -- got:\n" + "\n---\n".join(readme_prompts)
+    )
+    assert not any("Dependencies: ['entities/player.gd']" in p for p in readme_prompts), (
+        "the text-reference-derived dependency leaked into the summary-routing decision"
+    )
+
+
 def test_pack_scopes_files_via_ziplex_json_include(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")

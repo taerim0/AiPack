@@ -14,9 +14,45 @@ file, a match found here already IS a real collected file, so it can go
 straight into `dependencies` the same way a resolved import would (see
 packager.py's per-file loop -- it's appended there, not routed through any
 separate resolve step).
+
+Known, accepted limitation: a Godot scene's ext_resource path is a genuine
+structural coupling (the scene can't load without it), but a README
+mentioning a filename in prose is a much weaker signal -- both currently
+land in the same `dependencies` list with no way to tell them apart once
+they reach `relationships`/get_blast_radius/get_dependents. Distinguishing
+"referenced in passing" from "structurally coupled" would need the kind of
+provenance/confidence tagging Tier 3's still-open LLM-inference phase
+(Phase B -- see the `ziplex-roadmap` memory) already has to solve for a
+harder reason (a guess isn't a fact); doing it here too was judged not
+worth a schema change for Phase A's sake alone.
 """
 
 import re
+from pathlib import Path
+
+from extract.code.languages import get_language_config
+from file.textutil import read_text
+
+
+def find_text_references_for_file(file_path: str, name: str, all_names: list[str]) -> list[str]:
+    """File-level convenience wrapper around find_text_references(): reads
+    file_path itself and skips it entirely (empty list, no error) when it
+    has a Tree-sitter grammar (get_language_config(ext) is not None -- that
+    file's own dependency_handler already covers it, and re-scanning its
+    text on top would risk noisy incidental matches inside comments/
+    strings) or isn't readable as text at all.
+
+    Exists so this "which files get scanned, and how" decision lives in
+    exactly one place -- packager.py's pack() and cli.py's `tree` subcommand
+    both call this instead of each re-implementing the same
+    get_language_config/read_text guard independently and risking drift.
+    """
+    if get_language_config(Path(file_path).suffix) is not None:
+        return []
+    content = read_text(file_path)
+    if content is None:
+        return []
+    return find_text_references(content, name, all_names)
 
 
 def find_text_references(content: str, self_path: str, other_paths: list[str]) -> list[str]:

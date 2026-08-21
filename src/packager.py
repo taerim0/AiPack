@@ -5,11 +5,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from file.collector import collect_files
 from file.scanner import scan_files
 from file.selector import select_files
-from file.textutil import relative_key as _rel_key, read_text
+from file.textutil import relative_key as _rel_key
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api
 from extract.code.compressor import compress_file
-from extract.code.languages import get_language_config
-from text_references import find_text_references
+from text_references import find_text_references_for_file
 from tokenizer import analyze_tokens_with_payload
 from llm import analyze_file_summary, analyze_text_summary, analyze_batch_summaries, analyze_rules, analyze_prompt
 from freshness import build_manifest, check_freshness
@@ -312,13 +311,26 @@ def pack(
     signatures_map = {}
 
     # All selected files' relative keys, computed once -- text_references.
-    # find_text_references() needs the real candidate list to match a non-
-    # code file's content against (see step 4b below), not just file_path
-    # itself.
+    # find_text_references_for_file() needs the real candidate list to
+    # match a non-code file's content against, not just file_path itself.
     all_names = [_rel_key(fp, root) for fp in selected]
+
+    # Text-reference matches (see text_references.py), kept separate from
+    # files_data[fp]["dependencies"] until *after* step 5's LLM summary
+    # loop below, not merged in here -- _request_summary()/
+    # analyze_batch_summaries() both switch a file's summary prompt from
+    # content-based to signature/dependency-based the moment `dependencies`
+    # is non-empty. Merging immediately would silently swap a text file's
+    # (README, .tscn, ...) content-based prompt for a signatures=[]/
+    # dependencies=[the very refs just found]-only one the instant it
+    # picked up any text reference -- Gemini would summarize it having
+    # never seen its actual content. Computed for every file regardless of
+    # checkpoint-restore, so a run resumed mid-way still gets it.
+    text_refs_by_path: dict[str, list[str]] = {}
 
     for file_path in selected:
         name = _rel_key(file_path, root)
+        text_refs_by_path[file_path] = find_text_references_for_file(file_path, name, all_names)
 
         # restore from checkpoint
         if checkpoint and name in checkpoint.get("files_data", {}):
@@ -332,16 +344,6 @@ def pack(
         deps = extract_dependencies(file_path)
         apis = extract_api(file_path)
         compressed = compress_file(file_path)
-
-        # 4b. Text-reference scanning -- only for files with no Tree-sitter
-        # grammar (get_language_config returns None), so this never
-        # interferes with a code file's own import-based extraction above.
-        # Free (no LLM call): matches against the real collected-file list,
-        # not a generic "looks like a path" guess -- see text_references.py.
-        if get_language_config(Path(file_path).suffix) is None:
-            text_content = read_text(file_path)
-            if text_content is not None:
-                deps = deps + find_text_references(text_content, name, all_names)
         reused_summary = previous_summaries.get(name, "")
 
         files_data[file_path] = {
@@ -390,6 +392,16 @@ def pack(
                 fp = name_to_fp[name]
                 files_data[fp]["summary"] = summary or "요약 생성 실패"
                 print(f"  ✅ {name}")
+
+    # Only now -- after every summary prompt has already been built from
+    # code-only `dependencies` above -- fold in the free text-reference
+    # matches computed earlier. `relationships` (built later, from this
+    # same `dependencies` field) is meant to include them; the LLM summary
+    # step just needed to not see them yet. See text_refs_by_path's own
+    # comment above for why the ordering matters.
+    for fp, data in files_data.items():
+        if text_refs_by_path.get(fp):
+            data["dependencies"] = data["dependencies"] + text_refs_by_path[fp]
 
     # Confidence signal for every summary (reused, checkpoint-restored, or
     # freshly generated) -- free, no LLM call: just how much of the file's
