@@ -41,23 +41,35 @@ source, via search_project) to anyone who can reach the port; the
 MCP server to the internet) for the same reason.
 
 Run directly:
-    python src/gui_server.py [--aif PATH] [--project PATH] [--port 5321]
+    python src/gui/gui_server.py [--aif PATH] [--project PATH] [--port 5321]
 """
 
 import argparse
 import json
 import socket
+import sys
 import threading
 import webbrowser
 from pathlib import Path
 
+# This file lives one level under src/ (src/gui/), unlike every top-level
+# module it imports below (query_service.py, file/) -- a direct `python
+# src/gui/gui_server.py` invocation only puts src/gui/ on sys.path[0], not
+# src/ itself. Adding src/ (this file's grandparent) before those imports
+# reproduces what pytest.ini's `pythonpath = src` already does for tests,
+# and what running any top-level script (src/cli.py, src/mcp_server.py)
+# gets for free just by living directly in src/.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from flask import Flask, jsonify, request
 
-import pack_service
+from gui import pack_service
 import query_service
 from file.relationship import CycleError
 
-app = Flask(__name__, static_folder="gui", static_url_path="")
+# static_folder="." -- not "gui" -- since index.html/app.js/style.css are
+# this file's own siblings now that gui_server.py itself lives in src/gui/.
+app = Flask(__name__, static_folder=".", static_url_path="")
 
 # Filled in from CLI args at startup (see main()); read by GET /api/config
 # so the frontend can prefill the landing page without a templating layer --

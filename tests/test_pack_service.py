@@ -11,7 +11,7 @@ import time
 
 import llm
 import packager
-import pack_service
+from gui import pack_service
 from file.relationship import CycleError
 
 

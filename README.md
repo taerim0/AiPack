@@ -161,9 +161,9 @@ Read-only and deliberately so: every tool serves an `aif.json`/`detail.json` a h
 A local, single-user GUI for two situations: packing a project without touching a terminal, and browsing an already-packed project somewhere Claude Code (or MCP generally) isn't available but a browser-based AI chat is.
 
 ```bash
-python src/gui_server.py                                            # native window (pywebview)
-python src/gui_server.py --aif out.json --project ./your-project/   # prefill the landing page
-python src/gui_server.py --no-window                                # plain browser tab instead
+python src/gui/gui_server.py                                            # native window (pywebview)
+python src/gui/gui_server.py --aif out.json --project ./your-project/   # prefill the landing page
+python src/gui/gui_server.py --no-window                                # plain browser tab instead
 ```
 
 **Pack from the GUI** — pick a project folder with the native folder picker, check off which files to include (the same safe/dangerous split `collect`'s security scan produces), and watch the pack run in the background. Analysis pauses for review before anything is saved: edit the project name, guide, rules, and per-file summaries (only the low-confidence ones are flagged, same triage the CLI uses), and adjust the dependency graph by linking or unlinking individual edges — a file with more than one real parent keeps its other references intact.

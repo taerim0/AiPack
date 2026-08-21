@@ -16,7 +16,7 @@ import time
 import pytest
 
 import freshness
-import gui_server
+from gui import gui_server
 import llm
 import packager
 

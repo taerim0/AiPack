@@ -160,9 +160,9 @@ claude mcp add ziplex -- python src/mcp_server.py      # Claude Code에 등록 (
 터미널을 쓰지 않고 프로젝트를 패킹하거나, Claude Code(또는 MCP 자체)를 쓸 수 없지만 브라우저 기반 AI 챗은 쓸 수 있는 환경에서 이미 패킹된 프로젝트를 둘러보는 용도의 로컬 단일 사용자 GUI입니다.
 
 ```bash
-python src/gui_server.py                                            # 네이티브 창 (pywebview)
-python src/gui_server.py --aif out.json --project ./your-project/   # 시작 화면 미리 채우기
-python src/gui_server.py --no-window                                # 창 대신 일반 브라우저 탭
+python src/gui/gui_server.py                                            # 네이티브 창 (pywebview)
+python src/gui/gui_server.py --aif out.json --project ./your-project/   # 시작 화면 미리 채우기
+python src/gui/gui_server.py --no-window                                # 창 대신 일반 브라우저 탭
 ```
 
 **GUI에서 패킹하기** — 네이티브 폴더 선택창으로 프로젝트 폴더를 고르고, 어떤 파일을 포함할지 체크박스로 고른 뒤(`collect`의 보안 스캔이 만드는 것과 같은 safe/dangerous 구분), 백그라운드에서 돌아가는 패킹 과정을 지켜봅니다. 분석이 끝나면 저장 전에 검토 단계에서 멈춥니다 — 프로젝트 이름, 가이드, 룰, 파일별 요약을 고칠 수 있고(CLI와 같은 기준으로 신뢰도가 낮은 것만 검토 대상으로 표시됩니다), 의존성 그래프도 엣지 하나하나를 잇거나 끊는 방식으로 조정할 수 있습니다 — 부모가 여러 개인 파일이라도 다른 참조는 그대로 남습니다.
