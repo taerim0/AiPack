@@ -42,6 +42,7 @@ project/  ──►  수집  ──►  보안 스캔  ──►  선택  ──
 - **LLM 프로바이더 독립적** — Gemini를 다른 모델로 바꾸고 싶으면 `generate()` 메서드 하나만 구현해서 등록하면 끝입니다. 나머지 파이프라인은 손댈 필요가 없습니다.
 - **git 저장소 전용이 아님** — 일반적인 소프트웨어 저장소가 아니어도 상관없습니다. 게임 모드, 에셋 프로젝트처럼 여러 확장자의 파일이 서로 얽혀 있는 로컬 파일 모음이라면 무엇이든 동작합니다.
 - **CLI 없이 쓰는 로컬 GUI** — 터미널 대신 네이티브 창(또는 일반 브라우저 탭)에서 프로젝트를 패킹하고, 요약을 검토하고, 관계를 편집할 수 있습니다. 같은 GUI가 Claude Code나 MCP를 쓸 수 없는 환경에서 이미 패킹된 프로젝트를 둘러보는 읽기 전용 브라우저 역할도 합니다(아래 [GUI](#gui) 참고).
+- **Claude Agent Skill 내보내기** — 이미 패킹된 프로젝트를 `.claude/skills/` 디렉터리로 만들어서, MCP 서버 없이도 Claude Code가 알아서 점진적으로 불러오게 합니다(아래 [Claude Agent Skill 내보내기](#claude-agent-skill-내보내기) 참고).
 
 ## 빠른 시작
 
@@ -171,6 +172,17 @@ python src/gui/gui_server.py --no-window                                # 창 �
 
 `127.0.0.1`에만 바인딩됩니다 — `--host` 옵션이 없고, 네트워크에 노출할 방법도 없습니다.
 
+## Claude Agent Skill 내보내기
+
+패킹된 프로젝트에 접근하는 세 번째 방법입니다 — MCP 서버나 GUI 대신, Claude Code는 쓸 수 있지만 MCP 서버 등록까지는 부담스러운 순간을 위한 것입니다:
+
+```bash
+python src/cli.py skill result/my-project.json               # .claude/skills/my-project/ 생성
+python src/cli.py skill result/my-project.json -o some/dir    # 출력 디렉터리 직접 지정
+```
+
+[Claude Agent Skill](https://code.claude.com/docs/en/skills)을 만듭니다 — `SKILL.md`와 `references/overview.md`/`files.md`/`relationships.md`/`detail.json`으로 구성되며, `.claude/skills/` 아래에 두기만 하면 서버 프로세스 없이도 Claude Code가 알아서 인식하고 점진적으로 불러옵니다. [repomix](https://repomix.com/guide/agent-skills-generation)의 동일한 `--skill-generate` 기능과 다른 점: `references/files.md`엔 원본 코드를 통째로 넣지 않습니다 — `aif.json` 자체가 이미 그렇듯 요약과 신뢰도 점수까지만 담고, 압축된 본문은 `references/detail.json`으로만 나갑니다. 생성된 디렉터리를 커밋하는 것도 `aif.json`/`detail.json`을 커밋하는 것과 같은 방식입니다(아래 팀에서 사용하기 참고) — 그냥 파일일 뿐이니까요.
+
 ## 팀에서 사용하기
 
 Ziplex는 한 사람의 로컬 스냅샷을 패킹합니다 — 공유 서버나 실시간 동기화는 없습니다. 그렇다고 팀에서 못 쓴다는 건 아닙니다: `aif.json`/`detail.json`/`cache.json`은 그냥 파일이라, 다른 자동 생성 산출물처럼 프로젝트 저장소에 커밋해서 팀이 하나의 기준선을 공유할 수 있습니다.
@@ -185,7 +197,7 @@ Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python
 
 ## 로드맵
 
-**AI로의 선택적 파일 전달** — Ziplex에서 파일을 골라 복사-붙여넣기 없이 대화창에 바로 전달합니다. 파일 내용은 물론 의존성, 시그니처, 요약까지 함께 넘어갑니다. *(읽기 전용으로 "둘러보고 직접 복사"하는 절반은 위 [GUI](#gui)로 이미 나왔습니다 — 아직 남은 건 그 전달을 자동화하는 부분입니다.)*
+**AI로의 선택적 파일 전달** — Ziplex에서 파일을 골라 복사-붙여넣기 없이 대화창에 바로 전달합니다. 파일 내용은 물론 의존성, 시그니처, 요약까지 함께 넘어갑니다. *(읽기 전용으로 "둘러보고 직접 복사"하는 절반은 [GUI](#gui)로 나왔고, [Skill 내보내기](#claude-agent-skill-내보내기)는 Claude Code 한정으로 그 복사-붙여넣기 자체를 없앴습니다 — 다만 특정 파일을 그때그때 고르는 게 아니라 정적 스냅샷입니다. 아직 남은 건 로컬 에이전트가 아예 없는 일반 웹 챗에서도 같은 걸 하는 부분입니다.)*
 
 **모든 파일 타입에 대한 관계 분석** — 의존성 그래프를 코드 파일 너머로 확장합니다. 설정, 텍스트, 바이너리 자산까지 LLM 추론으로 엮어서 하나의 그림으로 만듭니다.
 

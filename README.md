@@ -42,6 +42,7 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 - **Provider-agnostic LLM layer** — swapping Gemini for another model is implementing one `generate()` method and registering it, not touching the rest of the pipeline.
 - **Not just for git repos** — works on any collection of local files with relationships across extensions: game mods, asset projects, whatever isn't a typical software repo.
 - **Local GUI, no CLI required** — pack a project, review its summaries, and edit relationships all from a native window (or a plain browser tab) instead of the terminal; the same GUI doubles as a read-only browse/search companion over an already-packed project for anyone without Claude Code or MCP access (see [GUI](#gui) below).
+- **Claude Agent Skill export** — turn an already-packed project into a `.claude/skills/` directory Claude Code discovers and progressively loads on its own, no MCP server required (see [Claude Agent Skill export](#claude-agent-skill-export) below).
 
 ## Quick start
 
@@ -172,6 +173,17 @@ python src/gui/gui_server.py --no-window                                # plain 
 
 Binds to `127.0.0.1` only — no `--host` flag, no way to expose it to a network.
 
+## Claude Agent Skill export
+
+A third way to reach a packed project, alongside the MCP server and the GUI — for when Claude Code is available but registering an MCP server isn't (or is more setup than the moment calls for):
+
+```bash
+python src/cli.py skill result/my-project.json               # writes .claude/skills/my-project/
+python src/cli.py skill result/my-project.json -o some/dir    # custom output directory
+```
+
+Generates a [Claude Agent Skill](https://code.claude.com/docs/en/skills) — `SKILL.md` plus `references/overview.md`/`files.md`/`relationships.md`/`detail.json` — that Claude Code discovers and progressively loads on its own once it sits under `.claude/skills/`, no server process required. Unlike [repomix](https://repomix.com/guide/agent-skills-generation)'s equivalent `--skill-generate` feature, `references/files.md` never embeds full raw source — it stays to summaries and confidence scores, exactly what `aif.json` itself already restricts to; the *compressed* body only ships as `references/detail.json`. Committing the generated directory works the same way committing `aif.json`/`detail.json` does (see Team use below) — it's just files.
+
 ## Team use
 
 Ziplex packs one person's local snapshot — there's no shared server or live sync. That doesn't rule out team use, though: `aif.json`/`detail.json`/`cache.json` are just files, so a team can commit them to the project's own repo the same way any other generated-but-versioned artifact works.
@@ -186,7 +198,7 @@ Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python
 
 ## Roadmap
 
-**Selective file delivery to AI** — pick specific files in Ziplex and send them straight into a chat with full context attached (dependencies, signature, summary) — no copy-pasting. *(The read-only "browse and copy by hand" half of this already ships via the [GUI](#gui) above; what's still open is automating that hand-off.)*
+**Selective file delivery to AI** — pick specific files in Ziplex and send them straight into a chat with full context attached (dependencies, signature, summary) — no copy-pasting. *(The read-only "browse and copy by hand" half of this ships via the [GUI](#gui); [Skill export](#claude-agent-skill-export) removes the copy-paste step entirely for Claude Code specifically, though it's a static snapshot, not a live per-file pick. What's still open: the same no-copy-paste experience for a plain web chat with no local agent at all.)*
 
 **Relationship analysis across all file types** — extend the dependency graph past code files, using LLM inference to connect config, text, and binary assets into the same picture.
 

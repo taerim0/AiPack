@@ -15,6 +15,7 @@ from edits import finalize_aif
 from file.relationship import build_tree, print_tree as print_dependency_tree
 from search import search_files, read_detail_range
 from freshness import check_freshness
+from skill_export import export_skill
 
 
 def main():
@@ -73,6 +74,10 @@ def main():
     fr = sub.add_parser("freshness", help="aif.json이 최신 상태인지 확인 (해시 비교, LLM 호출 없음)")
     fr.add_argument("path", help="프로젝트 폴더 경로")
     fr.add_argument("cache_path", help="<name>.cache.json 경로")
+
+    sk = sub.add_parser("skill", help="aif.json을 Claude Agent Skill로 내보내기 (.claude/skills/, MCP 서버 없이도 인식됨)")
+    sk.add_argument("aif_path", help="aif.json 경로")
+    sk.add_argument("--output", "-o", default=None, help="출력 디렉터리 (기본값: .claude/skills/<프로젝트명>/)")
 
     args = parser.parse_args()
 
@@ -304,6 +309,11 @@ def main():
                 print(f"  추가됨 ({len(report.added)}): {', '.join(report.added)}")
             if report.removed:
                 print(f"  삭제됨 ({len(report.removed)}): {', '.join(report.removed)}")
+
+    elif args.command == "skill":
+        target = export_skill(args.aif_path, args.output)
+        print(f"✅ Skill 내보내기 완료: {target}")
+        print("   Claude Code가 자동으로 인식하려면 프로젝트 루트의 .claude/skills/ 아래에 있어야 합니다.")
 
 if __name__ == "__main__":
     main()
