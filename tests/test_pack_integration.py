@@ -57,6 +57,27 @@ def test_pack_runs_end_to_end_with_mock_provider(tmp_path, monkeypatch):
     assert set(aif["_manifest"].keys()) == {"main.py", "README.md"}
 
 
+def test_pack_captures_a_text_file_reference_to_a_code_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "entities" / "player.gd", "extends Node\nfunc _ready():\n    pass\n")
+    # README.md has no Tree-sitter grammar, so extract_dependencies() alone
+    # would never connect it to player.gd -- this is exactly the gap
+    # text_references.py closes.
+    _write(project / "README.md", "See entities/player.gd for the player logic.\n")
+
+    aif = packager.pack(str(project), auto=True, interactive=False)
+
+    assert aif["files"]["README.md"]["dependencies"] == ["entities/player.gd"]
+    # and it survives finalize_aif()'s relationship-building the same way a
+    # real import would
+    from edits import finalize_aif
+    final = finalize_aif(aif)
+    assert final["relationships"]["README.md"]["internal"] == ["entities/player.gd"]
+
+
 def test_pack_scopes_files_via_ziplex_json_include(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")

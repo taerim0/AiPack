@@ -4,8 +4,11 @@ from pathlib import Path
 
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api, debug_tree
 from extract.code.compressor import compress_file
+from extract.code.languages import get_language_config
 from file.collector import collect_files, print_tree as print_file_tree
 from file.scanner import scan_files
+from file.textutil import relative_key as _rel_key, read_text
+from text_references import find_text_references
 from tokenizer import analyze_tokens, analyze_tokens_with_compression
 from file.selector import select_files
 from llm import analyze_file_summary, analyze_rules, analyze_prompt
@@ -271,10 +274,22 @@ def main():
         scan_result = scan_files(files)
         safe_files = scan_result["safe"]
 
+        # Keyed by relative_key(), not the raw file_path collect_files()
+        # returns -- matching packager.py's own convention (and required
+        # for the text-reference matching below: find_text_references()
+        # returns entries straight from this same relative-key list, which
+        # only resolve correctly against a stem_map built from those same
+        # keys; see resolve_dependency()'s exact-key-match branch).
+        all_names = [_rel_key(fp, args.path) for fp in safe_files]
         files_data = {}
         for file_path in safe_files:
+            name = _rel_key(file_path, args.path)
             deps = extract_dependencies(file_path)
-            files_data[file_path] = {"dependencies": deps}
+            if get_language_config(Path(file_path).suffix) is None:
+                text_content = read_text(file_path)
+                if text_content is not None:
+                    deps = deps + find_text_references(text_content, name, all_names)
+            files_data[name] = {"dependencies": deps}
 
         tree = build_tree(files_data)
         print_dependency_tree(tree)

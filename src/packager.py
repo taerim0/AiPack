@@ -5,9 +5,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from file.collector import collect_files
 from file.scanner import scan_files
 from file.selector import select_files
-from file.textutil import relative_key as _rel_key
+from file.textutil import relative_key as _rel_key, read_text
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api
 from extract.code.compressor import compress_file
+from extract.code.languages import get_language_config
+from text_references import find_text_references
 from tokenizer import analyze_tokens_with_payload
 from llm import analyze_file_summary, analyze_text_summary, analyze_batch_summaries, analyze_rules, analyze_prompt
 from freshness import build_manifest, check_freshness
@@ -309,6 +311,12 @@ def pack(
     files_data = {}
     signatures_map = {}
 
+    # All selected files' relative keys, computed once -- text_references.
+    # find_text_references() needs the real candidate list to match a non-
+    # code file's content against (see step 4b below), not just file_path
+    # itself.
+    all_names = [_rel_key(fp, root) for fp in selected]
+
     for file_path in selected:
         name = _rel_key(file_path, root)
 
@@ -324,6 +332,16 @@ def pack(
         deps = extract_dependencies(file_path)
         apis = extract_api(file_path)
         compressed = compress_file(file_path)
+
+        # 4b. Text-reference scanning -- only for files with no Tree-sitter
+        # grammar (get_language_config returns None), so this never
+        # interferes with a code file's own import-based extraction above.
+        # Free (no LLM call): matches against the real collected-file list,
+        # not a generic "looks like a path" guess -- see text_references.py.
+        if get_language_config(Path(file_path).suffix) is None:
+            text_content = read_text(file_path)
+            if text_content is not None:
+                deps = deps + find_text_references(text_content, name, all_names)
         reused_summary = previous_summaries.get(name, "")
 
         files_data[file_path] = {
