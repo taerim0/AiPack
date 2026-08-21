@@ -25,6 +25,24 @@ def test_build_tree_dedupes_and_excludes_self_reference():
     assert tree["a.py"]["internal"] == ["b.py"]
 
 
+def test_build_tree_resolves_a_dependency_stem_containing_a_dot():
+    # A dependency_handler for a path-based language (e.g. GDScript's
+    # preload("res://scripts/player.controller.gd")) normalizes to the bare
+    # stem before it ever reaches build_tree/resolve_dependency -- but that
+    # stem can itself contain a literal "." (a real Godot variant/state-
+    # script naming pattern). resolve_dependency() must match it via an
+    # exact stem_map-key lookup, not re-split it on "." as if it were a
+    # dotted module path (which would truncate "player.controller" down to
+    # just "controller" and silently miss the match).
+    files = {
+        "player.controller.gd": {"dependencies": ["config"]},
+        "config.gd": {"dependencies": []},
+        "player.gd": {"dependencies": ["player.controller"]},
+    }
+    tree = build_tree(files)
+    assert tree["player.gd"]["internal"] == ["player.controller.gd"]
+
+
 def test_has_cycle_detects_would_be_cycle():
     # b already depends on a; making a depend on b too (moving b under a)
     # would close a -> b -> a

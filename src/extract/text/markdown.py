@@ -34,6 +34,9 @@ _FENCE_LANG_TO_EXT = {
     "js": ".js",
     "jsx": ".js",
     "tsx": ".ts",
+    "lua": ".lua",
+    "gdscript": ".gd",
+    "gd": ".gd",
 }
 
 

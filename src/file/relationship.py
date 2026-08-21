@@ -10,15 +10,32 @@ def build_stem_map(file_names) -> dict:
 def resolve_dependency(dep: str, stem_map: dict) -> str | None:
     """Matches a dependencies entry against an internal project file name.
 
-    dep can come in two shapes:
-    - a raw import path extracted by Tree-sitter (e.g. "extract.code.extractor")
+    dep can come in three shapes:
+    - a raw dotted import path extracted by Tree-sitter (e.g.
+      "extract.code.extractor") -- resolved by its last "."-separated
+      segment, since that's the actual module/class name the rest of the
+      path just namespaces.
     - an already-pinned file name from a prior move in correct_relationships
       (e.g. "extractor.py")
+    - an already-normalized bare file stem from a dependency_handler whose
+      language expresses imports as file *paths* rather than dotted module
+      names (e.g. GDScript's preload("res://scripts/config.gd"), reduced by
+      _gdscript_dependency_handler to "config" before it ever reaches here).
+
+    The third shape is why this checks stem_map's keys directly before
+    falling back to the split-on-"." heuristic: that heuristic assumes any
+    "." in dep is a module-path separator, which is wrong once dep is
+    already a bare stem -- a stem that itself contains a literal "."
+    (e.g. "player.controller" from player.controller.gd, a real Godot
+    variant/state-script naming pattern) would otherwise get re-split and
+    truncated to "controller", matching nothing.
 
     Returns the file name on a match, or None for an external dependency.
     """
     if dep in stem_map.values():
         return dep
+    if dep in stem_map:
+        return stem_map[dep]
     return stem_map.get(dep.split(".")[-1])
 
 

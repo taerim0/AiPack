@@ -30,7 +30,7 @@ project/  ──►  수집  ──►  보안 스캔  ──►  선택  ──
 
 ## 주요 기능
 
-- **다국어 코드 압축** — 지금은 Python, Java, TypeScript, JavaScript를 지원합니다. 언어별 설정을 테이블(`LanguageConfig`) 하나로 관리해서, 새 문법을 추가할 때 코드를 갈아엎을 필요 없이 항목 하나만 추가하면 됩니다.
+- **다국어 코드 압축** — 지금은 Python, Java, TypeScript, JavaScript, Lua, GDScript를 지원합니다. 언어별 설정을 테이블(`LanguageConfig`) 하나로 관리해서, 새 문법을 추가할 때 코드를 갈아엎을 필요 없이 항목 하나만 추가하면 됩니다.
 - **코드 외 텍스트 압축** — JSON, Markdown(내부 코드 펜스 포함), 일반 텍스트도 각각 전용 압축기가 있습니다. 구조는 남기고 본문만 덜어내는, 코드 압축기와 같은 방식입니다.
 - **내장 보안 스캔** — `secretlint`를 우선 쓰고, 없으면 정규식으로 대체합니다. 민감한 파일은 수집 단계에서 걸러져 다음 단계로 아예 넘어가지 않습니다.
 - **검토는 선택 사항** — LLM이 만든 모든 결과물(요약, 룰, 프로젝트 가이드, 의존성 트리)은 저장 전에 사람이 검토·수정할 수 있고, `--auto-correct`로 통째로 건너뛸 수도 있습니다. 파일 선택(`--auto`)과 보정(`--auto-correct`)은 완전히 독립된 옵션이라, CI나 스크립트에서는 `pack`을 아예 비대화형으로 돌릴 수 있습니다.
@@ -181,7 +181,7 @@ Ziplex는 한 사람의 로컬 스냅샷을 패킹합니다 — 공유 서버나
 
 ## 기술 스택
 
-Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript 문법) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, `requests`를 통한 순수 REST 호출) · [MCP](https://modelcontextprotocol.io/) · Flask · pywebview · `secretlint` · `pathspec`
+Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript/Lua/GDScript 문법, GDScript는 `tree-sitter-language-pack` 경유) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, `requests`를 통한 순수 REST 호출) · [MCP](https://modelcontextprotocol.io/) · Flask · pywebview · `secretlint` · `pathspec`
 
 ## 로드맵
 
@@ -189,7 +189,7 @@ Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python
 
 **모든 파일 타입에 대한 관계 분석** — 의존성 그래프를 코드 파일 너머로 확장합니다. 설정, 텍스트, 바이너리 자산까지 LLM 추론으로 엮어서 하나의 그림으로 만듭니다.
 
-**언어 지원 확대** — GDScript, Lua, ZenScript 같은 게임 개발 전용 언어와 추가 프레임워크까지 Tree-sitter 지원 범위를 넓힙니다.
+**언어 지원 확대** — 게임 개발 전용 언어와 추가 프레임워크까지 Tree-sitter 지원 범위를 넓힙니다. Lua와 GDScript는 지원 완료 (GDScript는 전용 PyPI 패키지가 없어서 `tree-sitter-language-pack`에 번들된 문법을 대신 씁니다). ZenScript(마이너한 Minecraft 모딩 DSL)는 이 시점 기준 관리되는 Tree-sitter 문법 자체가 안 보여서 아직 열려있는 항목입니다.
 
 ## 라이선스
 

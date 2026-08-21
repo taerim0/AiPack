@@ -30,7 +30,7 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 
 ## Features
 
-- **Multi-language code compression** — Python, Java, TypeScript, and JavaScript today, via a per-language config table (`LanguageConfig`) so adding a new grammar is a single entry, not a rewrite.
+- **Multi-language code compression** — Python, Java, TypeScript, JavaScript, Lua, and GDScript today, via a per-language config table (`LanguageConfig`) so adding a new grammar is a single entry, not a rewrite.
 - **Text-aware compression beyond code** — dedicated compressors for JSON and Markdown (including embedded code fences) and plain text, using the same body-preserving philosophy as the code compressor.
 - **Security scanning built in** — `secretlint` first, regex fallback second; sensitive files never make it past collection.
 - **Human-in-the-loop correction, opt-in** — every LLM output (summaries, rules, project guide, dependency tree) is reviewable and editable before anything is saved, or skippable entirely with `--auto-correct`. File selection (`--auto`) and correction (`--auto-correct`) are independent flags, so `pack` can run fully headless for CI or scripted use.
@@ -182,7 +182,7 @@ Ziplex packs one person's local snapshot — there's no shared server or live sy
 
 ## Tech stack
 
-Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript grammars) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, plain REST via `requests`) · [MCP](https://modelcontextprotocol.io/) · Flask · pywebview · `secretlint` · `pathspec`
+Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript/Lua/GDScript grammars, GDScript via `tree-sitter-language-pack`) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, plain REST via `requests`) · [MCP](https://modelcontextprotocol.io/) · Flask · pywebview · `secretlint` · `pathspec`
 
 ## Roadmap
 
@@ -190,7 +190,7 @@ Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python
 
 **Relationship analysis across all file types** — extend the dependency graph past code files, using LLM inference to connect config, text, and binary assets into the same picture.
 
-**Expanded language support** — broader Tree-sitter coverage for game-specific languages (GDScript, Lua, ZenScript) and additional frameworks.
+**Expanded language support** — broader Tree-sitter coverage for game-specific languages and additional frameworks. Lua and GDScript shipped (GDScript's grammar has no dedicated PyPI package of its own -- sourced from `tree-sitter-language-pack`'s bundled copy instead). ZenScript (a niche Minecraft modding DSL) is still open; it doesn't appear to have a maintained Tree-sitter grammar at all as of this check.
 
 ## License
 
