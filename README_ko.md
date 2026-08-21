@@ -41,6 +41,7 @@ project/  ──►  수집  ──►  보안 스캔  ──►  선택  ──
 - **Incremental re-pack** — 콘텐츠 해시 매니페스트(`<name>.cache.json`)로, 같은 프로젝트를 다시 `pack`할 때 안 바뀐 파일은 요약을 재사용하고 LLM 호출을 아낍니다. 그래서 `aif.json`을 자주 최신 상태로 유지하는 게 실제로 부담 없어집니다. 얼마나 오래됐는지만 확인하고 싶을 땐 재-pack 없이 `check_freshness`로 따로 확인할 수도 있습니다(아래 MCP 서버 참고).
 - **LLM 프로바이더 독립적** — Gemini를 다른 모델로 바꾸고 싶으면 `generate()` 메서드 하나만 구현해서 등록하면 끝입니다. 나머지 파이프라인은 손댈 필요가 없습니다.
 - **git 저장소 전용이 아님** — 일반적인 소프트웨어 저장소가 아니어도 상관없습니다. 게임 모드, 에셋 프로젝트처럼 여러 확장자의 파일이 서로 얽혀 있는 로컬 파일 모음이라면 무엇이든 동작합니다.
+- **CLI 없이 쓰는 로컬 GUI** — 터미널 대신 네이티브 창(또는 일반 브라우저 탭)에서 프로젝트를 패킹하고, 요약을 검토하고, 관계를 편집할 수 있습니다. 같은 GUI가 Claude Code나 MCP를 쓸 수 없는 환경에서 이미 패킹된 프로젝트를 둘러보는 읽기 전용 브라우저 역할도 합니다(아래 [GUI](#gui) 참고).
 
 ## 빠른 시작
 
@@ -154,6 +155,22 @@ claude mcp add ziplex -- python src/mcp_server.py      # Claude Code에 등록 (
 
 `aif.json`/`detail.json`은 마지막 `pack` 실행 시점의 스냅샷이라, 활발히 바뀌는 프로젝트에서는 실제 상태와 어긋날 수 있습니다. `search_project`(항상 파일을 직접 읽음)를 제외한 나머지 툴은 전부 이 스냅샷을 그대로 믿습니다 — 오래됐을까 걱정되면 `check_freshness`부터 호출하거나, `get_overview`/`list_files`에 `project_path`를 함께 넘겨서 알아서 확인하게 하세요: 스냅샷이 오래됐으면 결과에 `_stale` 필드가 추가로 붙어서 옵니다. 뭘 고쳐주진 않지만, 나머지를 믿기 전에 다시 `pack`할 필요가 있는지는 알려줍니다.
 
+## GUI
+
+터미널을 쓰지 않고 프로젝트를 패킹하거나, Claude Code(또는 MCP 자체)를 쓸 수 없지만 브라우저 기반 AI 챗은 쓸 수 있는 환경에서 이미 패킹된 프로젝트를 둘러보는 용도의 로컬 단일 사용자 GUI입니다.
+
+```bash
+python src/gui_server.py                                            # 네이티브 창 (pywebview)
+python src/gui_server.py --aif out.json --project ./your-project/   # 시작 화면 미리 채우기
+python src/gui_server.py --no-window                                # 창 대신 일반 브라우저 탭
+```
+
+**GUI에서 패킹하기** — 네이티브 폴더 선택창으로 프로젝트 폴더를 고르고, 어떤 파일을 포함할지 체크박스로 고른 뒤(`collect`의 보안 스캔이 만드는 것과 같은 safe/dangerous 구분), 백그라운드에서 돌아가는 패킹 과정을 지켜봅니다. 분석이 끝나면 저장 전에 검토 단계에서 멈춥니다 — 프로젝트 이름, 가이드, 룰, 파일별 요약을 고칠 수 있고(CLI와 같은 기준으로 신뢰도가 낮은 것만 검토 대상으로 표시됩니다), 의존성 그래프도 엣지 하나하나를 잇거나 끊는 방식으로 조정할 수 있습니다 — 부모가 여러 개인 파일이라도 다른 참조는 그대로 남습니다.
+
+**기존 pack 둘러보기** — MCP 서버가 노출하는 overview/files/dependents/blast-radius/detail/search 뷰를 MCP 툴 호출 대신 웹 페이지로 그대로 씁니다. 각 페이지엔 복사 버튼이 있고, 의도된 흐름은 여기서 둘러본 다음 필요한 내용을 별도의 AI 챗에 직접 붙여넣는 것입니다 — GUI가 그 챗과 직접 통신하지는 않습니다.
+
+`127.0.0.1`에만 바인딩됩니다 — `--host` 옵션이 없고, 네트워크에 노출할 방법도 없습니다.
+
 ## 팀에서 사용하기
 
 Ziplex는 한 사람의 로컬 스냅샷을 패킹합니다 — 공유 서버나 실시간 동기화는 없습니다. 그렇다고 팀에서 못 쓴다는 건 아닙니다: `aif.json`/`detail.json`/`cache.json`은 그냥 파일이라, 다른 자동 생성 산출물처럼 프로젝트 저장소에 커밋해서 팀이 하나의 기준선을 공유할 수 있습니다.
@@ -164,11 +181,11 @@ Ziplex는 한 사람의 로컬 스냅샷을 패킹합니다 — 공유 서버나
 
 ## 기술 스택
 
-Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript 문법) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, `requests`를 통한 순수 REST 호출) · [MCP](https://modelcontextprotocol.io/) · `secretlint` · `pathspec`
+Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript 문법) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, `requests`를 통한 순수 REST 호출) · [MCP](https://modelcontextprotocol.io/) · Flask · pywebview · `secretlint` · `pathspec`
 
 ## 로드맵
 
-**AI로의 선택적 파일 전달** — Ziplex에서 파일을 골라 복사-붙여넣기 없이 대화창에 바로 전달합니다. 파일 내용은 물론 의존성, 시그니처, 요약까지 함께 넘어갑니다.
+**AI로의 선택적 파일 전달** — Ziplex에서 파일을 골라 복사-붙여넣기 없이 대화창에 바로 전달합니다. 파일 내용은 물론 의존성, 시그니처, 요약까지 함께 넘어갑니다. *(읽기 전용으로 "둘러보고 직접 복사"하는 절반은 위 [GUI](#gui)로 이미 나왔습니다 — 아직 남은 건 그 전달을 자동화하는 부분입니다.)*
 
 **모든 파일 타입에 대한 관계 분석** — 의존성 그래프를 코드 파일 너머로 확장합니다. 설정, 텍스트, 바이너리 자산까지 LLM 추론으로 엮어서 하나의 그림으로 만듭니다.
 

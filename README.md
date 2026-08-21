@@ -41,6 +41,7 @@ project/  ──►  collect  ──►  security scan  ──►  select  ─�
 - **Incremental re-pack** — a content-hash manifest (`<name>.cache.json`) lets a later `pack` on the same project reuse an unchanged file's summary instead of paying for another LLM call, so keeping a project's `aif.json` current stays cheap enough to actually do routinely. Detecting *whether* it's gone stale is also exposed standalone via `check_freshness`, without triggering a re-pack (see MCP server below).
 - **Provider-agnostic LLM layer** — swapping Gemini for another model is implementing one `generate()` method and registering it, not touching the rest of the pipeline.
 - **Not just for git repos** — works on any collection of local files with relationships across extensions: game mods, asset projects, whatever isn't a typical software repo.
+- **Local GUI, no CLI required** — pack a project, review its summaries, and edit relationships all from a native window (or a plain browser tab) instead of the terminal; the same GUI doubles as a read-only browse/search companion over an already-packed project for anyone without Claude Code or MCP access (see [GUI](#gui) below).
 
 ## Quick start
 
@@ -155,6 +156,22 @@ Read-only and deliberately so: every tool serves an `aif.json`/`detail.json` a h
 
 `aif.json`/`detail.json` are snapshots from the last `pack` run, so they can drift from an actively-changing project. Every tool above except `search_project` (which always reads files live) trusts that snapshot — call `check_freshness` first if you suspect it's gone stale, or just pass `project_path` to `get_overview`/`list_files` and let them check for you: a stale pack gets an extra `_stale` field in the result instead of silently being trusted. It won't fix anything, but it tells you whether a re-`pack` is warranted before you trust the rest.
 
+## GUI
+
+A local, single-user GUI for two situations: packing a project without touching a terminal, and browsing an already-packed project somewhere Claude Code (or MCP generally) isn't available but a browser-based AI chat is.
+
+```bash
+python src/gui_server.py                                            # native window (pywebview)
+python src/gui_server.py --aif out.json --project ./your-project/   # prefill the landing page
+python src/gui_server.py --no-window                                # plain browser tab instead
+```
+
+**Pack from the GUI** — pick a project folder with the native folder picker, check off which files to include (the same safe/dangerous split `collect`'s security scan produces), and watch the pack run in the background. Analysis pauses for review before anything is saved: edit the project name, guide, rules, and per-file summaries (only the low-confidence ones are flagged, same triage the CLI uses), and adjust the dependency graph by linking or unlinking individual edges — a file with more than one real parent keeps its other references intact.
+
+**Browse an existing pack** — the same overview/files/dependents/blast-radius/detail/search views the MCP server exposes, as web pages instead of MCP tool calls. Each page has a Copy button; the intended flow is looking around here and pasting what's useful into a separate AI chat by hand, not the GUI talking to that chat itself.
+
+Binds to `127.0.0.1` only — no `--host` flag, no way to expose it to a network.
+
 ## Team use
 
 Ziplex packs one person's local snapshot — there's no shared server or live sync. That doesn't rule out team use, though: `aif.json`/`detail.json`/`cache.json` are just files, so a team can commit them to the project's own repo the same way any other generated-but-versioned artifact works.
@@ -165,11 +182,11 @@ Ziplex packs one person's local snapshot — there's no shared server or live sy
 
 ## Tech stack
 
-Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript grammars) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, plain REST via `requests`) · [MCP](https://modelcontextprotocol.io/) · `secretlint` · `pathspec`
+Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript grammars) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, plain REST via `requests`) · [MCP](https://modelcontextprotocol.io/) · Flask · pywebview · `secretlint` · `pathspec`
 
 ## Roadmap
 
-**Selective file delivery to AI** — pick specific files in Ziplex and send them straight into a chat with full context attached (dependencies, signature, summary) — no copy-pasting.
+**Selective file delivery to AI** — pick specific files in Ziplex and send them straight into a chat with full context attached (dependencies, signature, summary) — no copy-pasting. *(The read-only "browse and copy by hand" half of this already ships via the [GUI](#gui) above; what's still open is automating that hand-off.)*
 
 **Relationship analysis across all file types** — extend the dependency graph past code files, using LLM inference to connect config, text, and binary assets into the same picture.
 
