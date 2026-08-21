@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from file.collector import collect_files
 from file.scanner import scan_files
@@ -10,203 +9,15 @@ from extract.code.extractor import extract_signatures, extract_dependencies, ext
 from extract.code.compressor import compress_file
 from text_references import find_text_references_for_file
 from tokenizer import analyze_tokens_with_payload
-from llm import analyze_file_summary, analyze_text_summary, analyze_batch_summaries, analyze_rules, analyze_prompt
-from freshness import build_manifest, check_freshness
+from llm import analyze_rules, analyze_prompt
+from freshness import build_manifest, load_previous_summaries
 from confidence import estimate_confidence
 from config import collection_kwargs
 from tech_stack import detect_tech_stack
+import checkpoint as ckpt
+import summarizer
 
-CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoint"
 RESULT_DIR = Path(__file__).parent.parent / "result"
-
-# Concurrency used when requesting per-file summaries in parallel.
-# Kept conservative with LLM API rate limits in mind — adjust if needed.
-MAX_WORKERS = 4
-
-# Files per batched summary request (see llm.analyze_batch_summaries). Trades
-# a somewhat larger prompt for far fewer requests -- directly eases the
-# rate-limit pressure that drives most first-pack retries, without changing
-# MAX_WORKERS' cross-batch parallelism.
-BATCH_SIZE = 8
-
-
-def save_checkpoint(root_path: str, data: dict) -> None:
-    CHECKPOINT_DIR.mkdir(exist_ok=True)
-    name = Path(root_path).name
-    path = CHECKPOINT_DIR / f"{name}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"\n  💾 체크포인트 저장됨: {path}")
-
-
-def load_checkpoint(root_path: str) -> dict | None:
-    name = Path(root_path).name
-    path = CHECKPOINT_DIR / f"{name}.json"
-    if not path.exists():
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def delete_checkpoint(root_path: str) -> None:
-    name = Path(root_path).name
-    path = CHECKPOINT_DIR / f"{name}.json"
-    if path.exists():
-        path.unlink()
-
-
-def handle_llm_failure(
-    name: str, field: str, current_aif: dict, root_path: str, interactive: bool = True
-) -> str | None:
-    """On an LLM call that's exhausted its own internal retries: ask the user
-    what to do (retry / type a value / checkpoint and exit), or -- when
-    interactive=False, e.g. under `pack --auto-correct` -- skip the prompt
-    entirely and behave as if "checkpoint and exit" was chosen. That keeps a
-    non-interactive `pack` call from blocking on input() forever (or crashing
-    with EOFError, which is what used to happen here under a closed stdin);
-    the caller gets a clean {} back and the checkpoint is there to resume
-    from once the LLM is behaving again.
-    """
-    print(f"\n  ⚠️  {name} {field} 생성 실패")
-
-    if not interactive:
-        print("  💾 비대화형 모드 → 체크포인트 저장 후 중단")
-        save_checkpoint(root_path, current_aif)
-        return "EXIT"
-
-    print("  [1] 재시도")
-    print("  [2] 직접 입력")
-    print("  [3] 저장 후 종료")
-    choice = input("  선택: ").strip()
-
-    if choice == "1":
-        return None
-    elif choice == "2":
-        return input(f"  {field} 직접 입력: ").strip()
-    elif choice == "3":
-        save_checkpoint(root_path, current_aif)
-        return "EXIT"
-
-    return None
-
-
-def _resume_checkpoint_choice(interactive: bool) -> bool:
-    """Returns True to resume from a found checkpoint, False to discard it and
-    start over. Non-interactive callers always resume -- silently discarding
-    prior progress is a worse default than continuing it, and there's no
-    terminal to ask.
-    """
-    if not interactive:
-        return True
-
-    print(f"\n  📂 체크포인트 발견")
-    print("  [1] 이어서 진행")
-    print("  [2] 처음부터 시작")
-    choice = input("  선택: ").strip()
-    return choice != "2"
-
-
-def _load_previous_summaries(root_path: str, selected: list[str]) -> dict[str, str]:
-    """{relative key: summary} for files in `selected` whose content hash
-    matches the last successful pack's manifest, at the conventional
-    RESULT_DIR path save_aif() writes to by default (<name>.json +
-    <name>.cache.json). This is what pack() checks before spending an LLM
-    call on a file's summary again.
-
-    Returns {} on any cache miss -- no previous pack there, or its output
-    files are missing/unreadable/corrupt -- rather than raising. A miss just
-    means every file gets summarized fresh, same as before this existed.
-    """
-    name = Path(root_path).name
-    aif_path = RESULT_DIR / f"{name}.json"
-    cache_path = RESULT_DIR / f"{name}.cache.json"
-    if not aif_path.exists() or not cache_path.exists():
-        return {}
-
-    try:
-        with open(aif_path, "r", encoding="utf-8") as f:
-            previous_files = json.load(f).get("files", {})
-        with open(cache_path, "r", encoding="utf-8") as f:
-            previous_manifest = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-    report = check_freshness(selected, root_path, previous_manifest)
-    return {
-        rel: previous_files[rel]["summary"]
-        for rel in report.unchanged
-        if rel in previous_files and previous_files[rel].get("summary")
-    }
-
-
-def _request_summary(file_path: str, data: dict) -> str:
-    """Tries once to get one file's summary; returns an empty string on failure.
-
-    (Network retries are already handled inside llm.generate(), so this only
-    tries once — whether to involve the user is up to the caller.)
-    """
-    if data["signatures"] or data["dependencies"]:
-        response = analyze_file_summary(
-            file_path,
-            data["signatures"],
-            data["dependencies"]
-        )
-    else:
-        # Use the already-computed compressed text, not a fresh raw read: it's
-        # cheaper (no second read, no separate truncation logic) and keeps the
-        # summary grounded in what actually ships in aif.json rather than text
-        # that may get stripped out of `compressed`.
-        response = analyze_text_summary(file_path, data.get("compressed", ""))
-
-    try:
-        return json.loads(response).get("summary", "")
-    except json.JSONDecodeError:
-        return ""
-
-
-def _chunked(items: list, size: int) -> list[list]:
-    return [items[i:i + size] for i in range(0, len(items), size)]
-
-
-def _request_batch_summaries(batch: list[tuple[str, dict]]) -> dict[str, str]:
-    """batch: [(relative name, data), ...]. Tries one LLM call covering the
-    whole batch; any name the response doesn't cover (missing entirely, or
-    the model didn't echo the exact key) falls back to _request_summary()
-    individually -- so a partially wrong/incomplete batch response only
-    costs what it actually failed on, not the whole batch, and a fully
-    garbled response degrades to the old one-call-per-file behavior instead
-    of losing every file in it.
-    """
-    items = [
-        {
-            "file": name,
-            "signatures": data["signatures"],
-            "dependencies": data["dependencies"],
-            "content": data.get("compressed", ""),
-        }
-        for name, data in batch
-    ]
-    response = analyze_batch_summaries(items)
-    try:
-        summaries = json.loads(response).get("summaries", {})
-    except json.JSONDecodeError:
-        summaries = {}
-
-    result = {}
-    for name, data in batch:
-        result[name] = summaries.get(name) or _request_summary(name, data)
-    return result
-
-
-def _current_aif_snapshot(root: Path, files_data: dict, rules: list = None, prompt: str = "") -> dict:
-    return {
-        "project": {"name": root.name, "prompt": prompt},
-        "rules": rules or [],
-        "files_data": {
-            _rel_key(fp, root): d
-            for fp, d in files_data.items()
-        }
-    }
 
 
 def pack(
@@ -231,11 +42,12 @@ def pack(
     auto controls file selection (skip the interactive picker, include all
     safe files); interactive controls whether a failing LLM call can prompt
     for input at all. The two are independent: `--auto` alone still lets
-    handle_llm_failure() ask what to do on a repeated failure, while
-    interactive=False makes that automatic (checkpoint + return {}) even with
-    file selection left interactive. `cli.py`'s `--auto-correct` sets both
-    this and whether corrector.py's interactive review runs afterward, since
-    both boil down to the same question: is there a terminal to prompt?
+    checkpoint.handle_llm_failure() ask what to do on a repeated failure,
+    while interactive=False makes that automatic (checkpoint + return {})
+    even with file selection left interactive. `cli.py`'s `--auto-correct`
+    sets both this and whether corrector.py's interactive review runs
+    afterward, since both boil down to the same question: is there a
+    terminal to prompt?
 
     preselected, when given, wins over both auto and the interactive
     select_files() picker: a list of relative names (the same keys aif.json
@@ -262,14 +74,13 @@ def pack(
     root = Path(root_path)
 
     # auto-detect a checkpoint
-    checkpoint = load_checkpoint(root_path)
-    if checkpoint and not _resume_checkpoint_choice(interactive):
+    checkpoint = ckpt.load_checkpoint(root_path)
+    if checkpoint and not ckpt.resume_checkpoint_choice(interactive):
         checkpoint = None
-        delete_checkpoint(root_path)
+        ckpt.delete_checkpoint(root_path)
 
     # restore from checkpoint
-    restored_rules = checkpoint.get("rules", []) if checkpoint else []
-    restored_prompt = checkpoint.get("project", {}).get("prompt", "") if checkpoint else ""
+    restored_rules, restored_prompt, restored_files_data = ckpt.unpack_snapshot(checkpoint)
 
     # 1. Collect files
     print("\n📁 파일 수집 중...")
@@ -302,7 +113,7 @@ def pack(
 
     # incremental reuse (staleness stage 2): {relative key: summary} for
     # files whose content hasn't changed since the last successful pack
-    previous_summaries = _load_previous_summaries(root_path, selected) if use_cache else {}
+    previous_summaries = load_previous_summaries(root_path, selected, RESULT_DIR) if use_cache else {}
     if previous_summaries:
         print(f"  ♻️  이전 pack에서 변경 없는 파일 {len(previous_summaries)}개 발견 — 요약 재사용")
 
@@ -318,7 +129,7 @@ def pack(
 
     # Text-reference matches (see text_references.py), kept separate from
     # files_data[fp]["dependencies"] until *after* step 5's LLM summary
-    # loop below, not merged in here -- _request_summary()/
+    # loop below, not merged in here -- summarizer.request_summary()/
     # analyze_batch_summaries() both switch a file's summary prompt from
     # content-based to signature/dependency-based the moment `dependencies`
     # is non-empty. Merging immediately would silently swap a text file's
@@ -334,9 +145,9 @@ def pack(
         text_refs_by_path[file_path] = find_text_references_for_file(file_path, name, all_names)
 
         # restore from checkpoint
-        if checkpoint and name in checkpoint.get("files_data", {}):
+        if name in restored_files_data:
             print(f"  ✅ {name} (체크포인트에서 복원)")
-            files_data[file_path] = checkpoint["files_data"][name]
+            files_data[file_path] = restored_files_data[name]
             if files_data[file_path].get("signatures"):
                 signatures_map[file_path] = files_data[file_path]["signatures"]
             continue
@@ -367,32 +178,15 @@ def pack(
     # Each file's summary is human-reviewed/corrected in correct_aif() later
     # (triaged by confidence -- see below -- so review effort scales with how
     # many summaries actually look suspicious, not with project size), so
-    # this skips the retry menu: try each file once in parallel and fill
-    # failures with a placeholder (a wrong summary still gets fixed in the
-    # next step).
+    # this skips the retry menu: try each file once in parallel (see
+    # summarizer.generate_summaries) and fill failures with a placeholder (a
+    # wrong summary still gets fixed in the next step).
     print("\n🤖 LLM 분석 중...")
     pending = {
         fp: data for fp, data in files_data.items() if not data.get("summary")
     }
-    # name_to_fp lets _request_batch_summaries() work with the same short,
-    # stable relative keys that show up in the LLM prompt/response, then map
-    # results back to the absolute paths files_data is keyed by.
-    name_to_fp = {_rel_key(fp, root): fp for fp in pending}
-    batches = [
-        [(name, pending[name_to_fp[name]]) for name in chunk]
-        for chunk in _chunked(list(name_to_fp.keys()), BATCH_SIZE)
-    ]
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {
-            executor.submit(_request_batch_summaries, batch): batch
-            for batch in batches
-        }
-        for future in as_completed(futures):
-            for name, summary in future.result().items():
-                fp = name_to_fp[name]
-                files_data[fp]["summary"] = summary or "요약 생성 실패"
-                print(f"  ✅ {name}")
+    for fp, summary in summarizer.generate_summaries(pending, root).items():
+        files_data[fp]["summary"] = summary
 
     # Only now -- after every summary prompt has already been built from
     # code-only `dependencies` above -- fold in the free text-reference
@@ -424,9 +218,9 @@ def pack(
                 rules = []
 
             if not rules:
-                result = handle_llm_failure(
+                result = ckpt.handle_llm_failure(
                     "rules", "코딩 룰",
-                    _current_aif_snapshot(root, files_data),
+                    ckpt.build_snapshot(root, files_data),
                     root_path,
                     interactive=interactive,
                 )
@@ -456,9 +250,9 @@ def pack(
                 prompt = ""
 
             if not prompt:
-                result = handle_llm_failure(
+                result = ckpt.handle_llm_failure(
                     "prompt", "AI 가이드",
-                    _current_aif_snapshot(root, files_data, rules),
+                    ckpt.build_snapshot(root, files_data, rules),
                     root_path,
                     interactive=interactive,
                 )
@@ -521,16 +315,16 @@ def pack(
     }
 
     # delete the checkpoint on success
-    delete_checkpoint(root_path)
+    ckpt.delete_checkpoint(root_path)
 
     return aif
 
 
 def save_aif(aif: dict, output_path: str | None = None) -> None:
     """Writes the AIF result to output_path, or to result/<project name>.json if
-    output_path isn't given — mirroring CHECKPOINT_DIR, anchored to the repo root
-    rather than the caller's cwd, so `pack` writes to the same place regardless of
-    where it's invoked from.
+    output_path isn't given — mirroring checkpoint.CHECKPOINT_DIR, anchored to
+    the repo root rather than the caller's cwd, so `pack` writes to the same
+    place regardless of where it's invoked from.
 
     Splits two things out of `aif` into sibling files, keyed the same way as
     `files`:

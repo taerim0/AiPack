@@ -14,15 +14,15 @@ Interactive parity with the CLI's plain `pack <path>` (no --auto, no
 
   - File selection: select_files() (file/selector.py) reads a number list
     off stdin, which doesn't exist over HTTP. list_selectable_files() runs
-    the same collect_files()/scan_files() steps up front so gui_server.py
+    the same collect_and_scan() step (config.py) up front so gui_server.py
     can show a human the safe/dangerous split as checkboxes; whatever they
     submit is passed into pack()'s new `preselected` parameter (see
     packager.py), which bypasses both `auto` and select_files() entirely.
   - Correction review: corrector.py's correct_aif() is a chain of input()
     prompts. Here, pack() runs with interactive=False (so a *repeated* LLM
-    failure still can't block on stdin -- see handle_llm_failure()'s
-    non-interactive path in packager.py; that one gap is a known
-    limitation, not something this module works around) but is *not*
+    failure still can't block on stdin -- see checkpoint.handle_llm_failure()'s
+    non-interactive path; that one gap is a known limitation, not something
+    this module works around) but is *not*
     followed by an immediate finalize_aif(). Instead the job pauses in
     state "reviewing" with the raw aif (still carrying signatures/
     dependencies/confidence) attached, mirroring what correct_aif() would
@@ -72,14 +72,12 @@ import uuid
 from pathlib import Path
 
 import packager
-from config import collection_kwargs
+from config import collect_and_scan
 from confidence import triage
 from edits import finalize_aif, set_file_summary, set_project_name, set_project_prompt, set_rules
-from file.collector import collect_files
 from file.relationship import add_dependency as _add_dependency
 from file.relationship import build_tree
 from file.relationship import remove_dependency as _remove_dependency
-from file.scanner import scan_files
 from file.textutil import relative_key as _rel_key
 
 _jobs: dict[str, dict] = {}
@@ -172,21 +170,20 @@ def _capture_for_job(job: dict):
 
 
 def list_selectable_files(project_path: str) -> dict:
-    """Runs collect_files()/scan_files() over project_path and returns the
+    """Runs config.collect_and_scan() over project_path and returns the
     safe/dangerous split as sorted relative names -- the read-only step a
     GUI file-selection screen calls before a pack job exists at all, so a
     human sees the real file list (and why anything got excluded) instead of
     guessing. Whatever's checked from `safe` on submit becomes
     start_pack_job()'s `selected_files`.
 
-    Also loads project_path's .ziplex.json (config.py), the same way pack()
-    itself does, so a file this screen never shows can't be re-included by
-    submitting selected_files with its name in it -- pack()'s own
-    collect_files() call wouldn't have produced it either, so it just
-    silently wouldn't match anything in `preselected`.
+    collect_and_scan() already loads project_path's .ziplex.json (config.py)
+    the same way pack() itself does, so a file this screen never shows can't
+    be re-included by submitting selected_files with its name in it --
+    pack()'s own collection step wouldn't have produced it either, so it
+    just silently wouldn't match anything in `preselected`.
     """
-    files = collect_files(project_path, **collection_kwargs(project_path))
-    scan_result = scan_files(files)
+    scan_result = collect_and_scan(project_path)
     return {
         "safe": sorted(_rel_key(f, project_path) for f in scan_result["safe"]),
         "dangerous": sorted(_rel_key(f, project_path) for f in scan_result["dangerous"]),

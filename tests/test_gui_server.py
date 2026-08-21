@@ -15,6 +15,7 @@ import time
 
 import pytest
 
+import checkpoint
 import freshness
 from gui import gui_server
 import llm
@@ -157,7 +158,7 @@ def test_api_pack_runs_end_to_end_with_mock_provider(client, tmp_path, monkeypat
     # (log capture, since= slicing, error state, review/edit application) is
     # covered directly in test_pack_service.py.
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     project.mkdir()
@@ -203,7 +204,7 @@ def test_api_pack_runs_end_to_end_with_mock_provider(client, tmp_path, monkeypat
 
 def test_api_pack_link_adds_an_edge_and_rejects_cycles(client, tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     project.mkdir()
@@ -228,7 +229,7 @@ def test_api_pack_link_adds_an_edge_and_rejects_cycles(client, tmp_path, monkeyp
 
 def test_api_pack_unlink_removes_only_that_edge(client, tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     project.mkdir()
@@ -253,7 +254,7 @@ def test_api_pack_unlink_removes_only_that_edge(client, tmp_path, monkeypatch):
 
 def test_api_pack_cancel_discards_a_reviewing_job(client, tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     project.mkdir()

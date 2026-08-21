@@ -1,6 +1,7 @@
+import json
 from pathlib import Path
 
-from freshness import hash_file, build_manifest, check_freshness
+from freshness import hash_file, build_manifest, check_freshness, load_previous_summaries
 
 
 def _write(path: Path, content: str):
@@ -78,3 +79,51 @@ def test_check_freshness_detects_added_and_removed_files(tmp_path):
     assert report.added == ["c.py"]
     assert report.removed == ["b.py"]
     assert report.unchanged == ["a.py"]
+
+
+def test_load_previous_summaries_returns_empty_when_no_previous_pack_exists(tmp_path):
+    assert load_previous_summaries("some/project", ["a.py"], tmp_path) == {}
+
+
+def test_load_previous_summaries_reuses_summary_for_an_unchanged_file(tmp_path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    project = tmp_path / "project"
+    _write(project / "a.py", "x = 1\n")
+
+    (result_dir / "project.json").write_text(
+        json.dumps({"files": {"a.py": {"summary": "does a thing"}}}), encoding="utf-8"
+    )
+    (result_dir / "project.cache.json").write_text(
+        json.dumps(build_manifest([str(project / "a.py")], str(project))), encoding="utf-8"
+    )
+
+    reused = load_previous_summaries(str(project), [str(project / "a.py")], result_dir)
+    assert reused == {"a.py": "does a thing"}
+
+
+def test_load_previous_summaries_excludes_a_changed_file(tmp_path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    project = tmp_path / "project"
+    _write(project / "a.py", "x = 1\n")
+
+    (result_dir / "project.json").write_text(
+        json.dumps({"files": {"a.py": {"summary": "does a thing"}}}), encoding="utf-8"
+    )
+    (result_dir / "project.cache.json").write_text(
+        json.dumps(build_manifest([str(project / "a.py")], str(project))), encoding="utf-8"
+    )
+
+    _write(project / "a.py", "x = 2\n")  # edit after the manifest was taken
+
+    assert load_previous_summaries(str(project), [str(project / "a.py")], result_dir) == {}
+
+
+def test_load_previous_summaries_tolerates_a_corrupt_cache_file(tmp_path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    (result_dir / "project.json").write_text('{"files": {}}', encoding="utf-8")
+    (result_dir / "project.cache.json").write_text("{ not valid json", encoding="utf-8")
+
+    assert load_previous_summaries("some/project", ["a.py"], result_dir) == {}

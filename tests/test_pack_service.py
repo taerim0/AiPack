@@ -9,6 +9,7 @@ test_pack_integration.py.
 import json
 import time
 
+import checkpoint
 import llm
 import packager
 from gui import pack_service
@@ -50,7 +51,7 @@ def test_list_selectable_files_splits_safe_and_dangerous(tmp_path):
 
 def test_start_pack_job_pauses_in_reviewing_state(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -66,7 +67,7 @@ def test_start_pack_job_pauses_in_reviewing_state(tmp_path, monkeypatch):
 
 def test_start_pack_job_only_includes_selected_files(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -81,7 +82,7 @@ def test_start_pack_job_only_includes_selected_files(tmp_path, monkeypatch):
 
 
 def test_get_review_returns_none_outside_reviewing_state(tmp_path, monkeypatch):
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "empty_project"
     project.mkdir()
@@ -95,7 +96,7 @@ def test_get_review_returns_none_outside_reviewing_state(tmp_path, monkeypatch):
 
 def test_submit_review_applies_edits_and_finalizes(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -129,7 +130,7 @@ def test_submit_review_applies_edits_and_finalizes(tmp_path, monkeypatch):
 
 def test_submit_review_keeps_unedited_fields_when_blank(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -155,7 +156,7 @@ def test_submit_review_unknown_job_raises_value_error():
 
 
 def test_submit_review_wrong_state_raises_value_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
     project = tmp_path / "empty_project"
     project.mkdir()
     job_id = pack_service.start_pack_job(str(project), selected_files=["nope.py"])
@@ -170,7 +171,7 @@ def test_submit_review_wrong_state_raises_value_error(tmp_path, monkeypatch):
 
 def test_cancel_job_discards_a_reviewing_job(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -197,7 +198,7 @@ def test_has_reviewing_job_reflects_job_state(tmp_path, monkeypatch):
     # dependent on what ran before it.
     monkeypatch.setattr(pack_service, "_jobs", {})
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     assert pack_service.has_reviewing_job() is False
 
@@ -215,7 +216,7 @@ def test_start_pack_job_evicts_oldest_finished_jobs_past_the_cap(tmp_path, monke
     monkeypatch.setattr(pack_service, "_jobs", {})
     monkeypatch.setattr(pack_service, "_MAX_FINISHED_JOBS", 2)
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -238,7 +239,7 @@ def test_start_pack_job_evicts_oldest_finished_jobs_past_the_cap(tmp_path, monke
 
 def test_review_includes_a_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "a.py", "def a():\n    pass\n")
@@ -255,7 +256,7 @@ def test_review_includes_a_tree(tmp_path, monkeypatch):
 
 def test_add_dependency_in_job_links_and_returns_updated_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "a.py", "def a():\n    pass\n")
@@ -277,7 +278,7 @@ def test_add_dependency_in_job_does_not_disturb_other_files_edges(tmp_path, monk
     # depended on by both a.py and c.py -- linking a new edge for a.py must
     # not touch c.py's own reference.
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "a.py", "def a():\n    pass\n")
@@ -298,7 +299,7 @@ def test_add_dependency_in_job_does_not_disturb_other_files_edges(tmp_path, monk
 
 def test_add_dependency_in_job_rejects_a_cycle(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "a.py", "def a():\n    pass\n")
@@ -318,7 +319,7 @@ def test_add_dependency_in_job_rejects_a_cycle(tmp_path, monkeypatch):
 
 def test_remove_dependency_in_job_unlinks_only_that_edge(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "a.py", "def a():\n    pass\n")
@@ -342,7 +343,7 @@ def test_get_review_reflects_edits_made_via_add_dependency_in_job(tmp_path, monk
     # was already applied to the job's real aif and would be what actually
     # gets saved.
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "a.py", "def a():\n    pass\n")
@@ -365,7 +366,7 @@ def test_add_dependency_in_job_after_cancel_raises_value_error_not_crash(tmp_pat
     # TypeError instead of the same clean ValueError every other invalid-
     # state case raises.
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "a.py", "def a():\n    pass\n")
@@ -392,7 +393,7 @@ def test_cancel_job_after_submit_review_is_a_noop(tmp_path, monkeypatch):
     # arriving anytime after submit_review() has been called at all is
     # rejected instead of silently reverting an already-saved result.
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "a.py", "def a():\n    pass\n")
@@ -426,7 +427,7 @@ def test_remove_dependency_in_job_unknown_job_raises_value_error():
 
 def test_add_dependency_in_job_persists_into_the_finalized_output(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "a.py", "def a():\n    pass\n")
@@ -451,7 +452,7 @@ def test_concurrent_jobs_do_not_cross_contaminate_logs(tmp_path, monkeypatch):
     # could each clobber the other's redirect, so one job's progress lines
     # could end up appended to a different job's log instead of its own.
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project_a = tmp_path / "project_alpha"
     _write(project_a / "alpha_only.py", "def alpha():\n    pass\n")
@@ -474,7 +475,7 @@ def test_concurrent_jobs_do_not_cross_contaminate_logs(tmp_path, monkeypatch):
 
 def test_get_job_status_since_returns_only_new_lines(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -491,7 +492,7 @@ def test_get_job_status_since_returns_only_new_lines(tmp_path, monkeypatch):
 
 
 def test_pack_job_on_empty_project_reports_error_state(tmp_path, monkeypatch):
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "empty_project"
     project.mkdir()  # no files at all -> pack() selects nothing and returns {}

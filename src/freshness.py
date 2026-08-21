@@ -7,14 +7,21 @@ tool except search_project() (which always re-reads files live) trusts that
 snapshot as-is. This is the tool to check whether that trust is still
 warranted before relying on (or re-packing) a project.
 
-This module only detects drift -- it doesn't refresh anything itself.
-packager.pack() is what actually uses check_freshness()'s `unchanged` list,
-to reuse a previous run's summary for any file whose content hash hasn't
-changed instead of paying for another LLM call.
+This module only detects drift -- it doesn't refresh anything itself, with
+one exception: load_previous_summaries() (staleness stage 2) is the actual
+cache-reuse lookup pack() calls to decide which files' summaries are safe
+to reuse instead of paying for another LLM call, built directly on
+check_freshness()'s `unchanged` list. It lives here rather than in
+summarizer.py (which requests a summary, but has no reason to know how a
+previous pack's output is found or what "still fresh" means) since the
+decision itself -- is this file's content still what it was last packed --
+is exactly this module's own subject.
 """
 
 import hashlib
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from file.textutil import read_text, relative_key
 
@@ -82,3 +89,36 @@ def check_freshness(file_paths: list[str], root: str, manifest: dict[str, str]) 
     )
 
     return FreshnessReport(changed=changed, added=added, removed=removed, unchanged=unchanged)
+
+
+def load_previous_summaries(root_path: str, selected: list[str], result_dir: Path) -> dict[str, str]:
+    """{relative key: summary} for files in `selected` whose content hash
+    matches the last successful pack's manifest, at result_dir (the
+    conventional path save_aif() writes to by default: <name>.json +
+    <name>.cache.json). This is what pack() checks before spending an LLM
+    call on a file's summary again.
+
+    Returns {} on any cache miss -- no previous pack there, or its output
+    files are missing/unreadable/corrupt -- rather than raising. A miss just
+    means every file gets summarized fresh, same as before this existed.
+    """
+    name = Path(root_path).name
+    aif_path = result_dir / f"{name}.json"
+    cache_path = result_dir / f"{name}.cache.json"
+    if not aif_path.exists() or not cache_path.exists():
+        return {}
+
+    try:
+        with open(aif_path, "r", encoding="utf-8") as f:
+            previous_files = json.load(f).get("files", {})
+        with open(cache_path, "r", encoding="utf-8") as f:
+            previous_manifest = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    report = check_freshness(selected, root_path, previous_manifest)
+    return {
+        rel: previous_files[rel]["summary"]
+        for rel in report.unchanged
+        if rel in previous_files and previous_files[rel].get("summary")
+    }

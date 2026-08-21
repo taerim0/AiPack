@@ -18,12 +18,10 @@ Read-only by design -- see `mcp_server.py`'s module docstring for why.
 import json
 from pathlib import Path
 
-from file.collector import collect_files
-from file.scanner import scan_files
 from file.relationship import get_dependents as _get_dependents, get_blast_radius as _get_blast_radius
 from search import search_files, read_detail_range
 from freshness import check_freshness as _check_freshness
-from config import collection_kwargs
+from config import collect_and_scan
 
 
 def _load_json(path: str) -> dict:
@@ -69,8 +67,7 @@ def _stale_warning(project_path: str | None, aif_path: str) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
 
-    files = collect_files(project_path, **collection_kwargs(project_path))
-    safe_files = scan_files(files)["safe"]
+    safe_files = collect_and_scan(project_path)["safe"]
     report = _check_freshness(safe_files, project_path, manifest)
     if not report.is_stale:
         return None
@@ -179,8 +176,7 @@ def check_freshness(project_path: str, aif_path: str) -> dict:
     immediately after a fresh pack.
     """
     manifest = _load_json(str(_cache_path(aif_path)))
-    files = collect_files(project_path, **collection_kwargs(project_path))
-    safe_files = scan_files(files)["safe"]
+    safe_files = collect_and_scan(project_path)["safe"]
     report = _check_freshness(safe_files, project_path, manifest)
     return {
         "is_stale": report.is_stale,
@@ -203,8 +199,7 @@ def search_project(project_path: str, pattern: str, context_lines: int = 0, igno
     scope pack() itself would use -- a file deliberately excluded from
     packing shouldn't turn up in search results either.
     """
-    files = collect_files(project_path, **collection_kwargs(project_path))
-    safe_files = scan_files(files)["safe"]
+    safe_files = collect_and_scan(project_path)["safe"]
     matches = search_files(safe_files, project_path, pattern, context_lines, ignore_case)
     return [
         {

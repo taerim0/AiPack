@@ -6,6 +6,7 @@ include/ignore-scoped pack() actually produced.
 """
 import json
 
+import checkpoint
 import llm
 import packager
 import query_service
@@ -18,7 +19,7 @@ def _write(path, content):
 
 def test_check_freshness_does_not_flag_ziplex_json_excluded_files_as_added(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "src" / "main.py", "def add(a, b):\n    return a + b\n")
@@ -41,7 +42,7 @@ def test_check_freshness_does_not_flag_ziplex_json_excluded_files_as_added(tmp_p
 
 def test_stale_warning_is_none_for_an_unchanged_scoped_project(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "src" / "main.py", "def add(a, b):\n    return a + b\n")

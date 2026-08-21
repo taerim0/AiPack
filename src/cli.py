@@ -19,7 +19,7 @@ from file.relationship import build_tree, print_tree as print_dependency_tree
 from search import search_files, read_detail_range
 from freshness import check_freshness
 from skill_export import export_skill
-from config import init_config, CONFIG_FILENAME, collection_kwargs as _collection_kwargs
+from config import init_config, CONFIG_FILENAME, collection_kwargs as _collection_kwargs, collect_and_scan as _collect_and_scan
 
 
 def _split_patterns(value: str | None) -> list[str] | None:
@@ -165,9 +165,7 @@ def main():
         print(f"\n✅ 안전한 파일: {len(scan_result['safe'])}개")
 
     elif args.command == "tokens":
-        files = collect_files(args.path, **_collection_kwargs(args.path))
-        scan_result = scan_files(files)
-        safe_files = scan_result["safe"]
+        safe_files = _collect_and_scan(args.path)["safe"]
 
         results, _ = analyze_tokens_with_compression(safe_files)
         print(f"\n📊 토큰 분석 ({len(safe_files)}개 파일)\n")
@@ -178,8 +176,7 @@ def main():
             print(f"  절감:    {data['saved']:,} 토큰 ({data['saved_pct']}% 감소)\n")
 
     elif args.command == "select":
-        files = collect_files(args.path, **_collection_kwargs(args.path))
-        scan_result = scan_files(files)
+        scan_result = _collect_and_scan(args.path)
         safe_files = scan_result["safe"]
 
         if scan_result["dangerous"]:
@@ -191,9 +188,7 @@ def main():
 
     elif args.command == "analyze":
         # 1. Collect files
-        files = collect_files(args.path, **_collection_kwargs(args.path))
-        scan_result = scan_files(files)
-        safe_files = scan_result["safe"]
+        safe_files = _collect_and_scan(args.path)["safe"]
 
         print(f"\n📁 분석 대상: {len(safe_files)}개 파일\n")
 
@@ -308,9 +303,7 @@ def main():
                     print(f"\n✅ 토큰 예산 통과: {args.max_tokens_model} 기준 {actual:,} ≤ {args.max_tokens:,}")
 
     elif args.command == "tree":
-        files = collect_files(args.path, **_collection_kwargs(args.path))
-        scan_result = scan_files(files)
-        safe_files = scan_result["safe"]
+        safe_files = _collect_and_scan(args.path)["safe"]
 
         # Keyed by relative_key(), not the raw file_path collect_files()
         # returns -- matching packager.py's own convention (and required
@@ -329,9 +322,7 @@ def main():
         print_dependency_tree(tree)
 
     elif args.command == "search":
-        files = collect_files(args.path, **_collection_kwargs(args.path))
-        scan_result = scan_files(files)
-        safe_files = scan_result["safe"]
+        safe_files = _collect_and_scan(args.path)["safe"]
 
         try:
             matches = search_files(
@@ -367,8 +358,7 @@ def main():
         with open(args.cache_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
 
-        files = collect_files(args.path, **_collection_kwargs(args.path))
-        safe_files = scan_files(files)["safe"]
+        safe_files = _collect_and_scan(args.path)["safe"]
         report = check_freshness(safe_files, args.path, manifest)
 
         if not report.is_stale:

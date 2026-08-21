@@ -13,8 +13,10 @@ point -- by an earlier test file.
 
 import json
 
+import checkpoint
 import llm
 import packager
+import summarizer
 
 
 def _write(path, content):
@@ -24,7 +26,7 @@ def _write(path, content):
 
 def test_pack_runs_end_to_end_with_mock_provider(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -59,7 +61,7 @@ def test_pack_runs_end_to_end_with_mock_provider(tmp_path, monkeypatch):
 
 def test_pack_attaches_tech_stack_detected_from_a_manifest_file(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -83,7 +85,7 @@ def test_pack_attaches_tech_stack_detected_from_a_manifest_file(tmp_path, monkey
 
 def test_pack_attaches_an_empty_tech_stack_when_no_manifest_present(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -95,7 +97,7 @@ def test_pack_attaches_an_empty_tech_stack_when_no_manifest_present(tmp_path, mo
 
 def test_pack_captures_a_text_file_reference_to_a_code_file(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "entities" / "player.gd", "extends Node\nfunc _ready():\n    pass\n")
@@ -123,7 +125,7 @@ def test_pack_text_reference_does_not_hijack_the_summary_prompt(tmp_path, monkey
     # never seen its actual text. MockProvider ignores prompt content
     # entirely, so this needs a provider that records what it was actually
     # asked, not just that *a* summary came back.
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     captured_prompts = []
 
@@ -153,7 +155,7 @@ def test_pack_text_reference_does_not_hijack_the_summary_prompt(tmp_path, monkey
 
 def test_pack_scopes_files_via_ziplex_json_include(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "src" / "main.py", "def add(a, b):\n    return a + b\n")
@@ -167,7 +169,7 @@ def test_pack_scopes_files_via_ziplex_json_include(tmp_path, monkeypatch):
 
 def test_pack_include_ignore_params_extend_ziplex_json_not_replace_it(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "src" / "main.py", "def add(a, b):\n    return a + b\n")
@@ -184,7 +186,7 @@ def test_pack_include_ignore_params_extend_ziplex_json_not_replace_it(tmp_path, 
 
 def test_save_aif_writes_a_sibling_cache_json_from_the_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
 
     project = tmp_path / "project"
     _write(project / "main.py", "def add(a, b):\n    return a + b\n")
@@ -222,7 +224,7 @@ class _CountingMockProvider(llm.MockProvider):
 def test_pack_reuses_summaries_for_unchanged_files_on_a_second_run(tmp_path, monkeypatch):
     provider = _CountingMockProvider()
     monkeypatch.setattr(llm, "_provider", provider)
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
     monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
 
     project = tmp_path / "project"
@@ -251,7 +253,7 @@ def test_pack_reuses_summaries_for_unchanged_files_on_a_second_run(tmp_path, mon
 def test_pack_only_resummarizes_a_changed_file(tmp_path, monkeypatch):
     provider = _CountingMockProvider()
     monkeypatch.setattr(llm, "_provider", provider)
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
     monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
 
     project = tmp_path / "project"
@@ -271,9 +273,9 @@ def test_pack_only_resummarizes_a_changed_file(tmp_path, monkeypatch):
 def test_pack_splits_into_multiple_batches_past_batch_size(tmp_path, monkeypatch):
     provider = _CountingMockProvider()
     monkeypatch.setattr(llm, "_provider", provider)
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
     monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
-    monkeypatch.setattr(packager, "BATCH_SIZE", 2)
+    monkeypatch.setattr(summarizer, "BATCH_SIZE", 2)
 
     project = tmp_path / "project"
     for i in range(5):
@@ -288,7 +290,7 @@ def test_pack_splits_into_multiple_batches_past_batch_size(tmp_path, monkeypatch
 def test_pack_use_cache_false_resummarizes_everything(tmp_path, monkeypatch):
     provider = _CountingMockProvider()
     monkeypatch.setattr(llm, "_provider", provider)
-    monkeypatch.setattr(packager, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
     monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
 
     project = tmp_path / "project"

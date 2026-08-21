@@ -19,6 +19,9 @@ by a path that could move.
 import json
 from pathlib import Path
 
+from file.collector import collect_files
+from file.scanner import scan_files
+
 CONFIG_FILENAME = ".ziplex.json"
 
 DEFAULT_CONFIG = {
@@ -68,6 +71,25 @@ def collection_kwargs(project_path: str, extra_include: list[str] | None = None,
     include = (cfg["include"] or []) + (extra_include or [])
     ignore = (cfg["ignore"] or []) + (extra_ignore or [])
     return {"include": include or None, "ignore": ignore or None}
+
+
+def collect_and_scan(
+    project_path: str, extra_include: list[str] | None = None, extra_ignore: list[str] | None = None
+) -> dict:
+    """collect_files() + scan_files(), scoped the same way collection_kwargs()
+    itself is -- the actual pairing every caller collection_kwargs()'s own
+    docstring names (cli.py, packager.py, gui/pack_service.py,
+    query_service.py) used to independently re-implement as
+    `collect_files(path, **collection_kwargs(path))` followed by a
+    `scan_files(...)` call. Centralizing the pairing itself here, not just
+    the kwargs it's built from, closes the same drift risk one level
+    further -- a future change to how collection and scanning fit together
+    now only has to be made in one place.
+
+    Returns the raw {"safe": [...], "dangerous": [...]} scan_files() dict.
+    """
+    files = collect_files(project_path, **collection_kwargs(project_path, extra_include, extra_ignore))
+    return scan_files(files)
 
 
 def init_config(project_path: str) -> str:
