@@ -317,6 +317,88 @@ def api_search():
     return jsonify(results)
 
 
+_JSON_FILE_TYPES = ("JSON 파일 (*.json)", "모든 파일 (*.*)")
+
+
+class _Api:
+    """Exposed to the frontend as window.pywebview.api once the main window
+    is created with js_api=... (see main()) -- lets app.js open a real OS
+    file/folder-picker dialog instead of requiring a human to type a path
+    by hand, for every path field the landing page has. Only available in
+    the default windowed mode: --no-window opens a plain browser tab with
+    no pywebview bridge, so app.js falls back to manual entry there (see
+    its hasApi()).
+
+    Defined at module level (not nested inside main(), where it used to
+    live) even though `webview` itself is only ever imported lazily inside
+    main()'s windowed branch (not moved to a top-level import -- --no-window
+    mode has no reason to require the pywebview package, or trigger
+    whatever native-backend probing importing it does, at all). Takes the
+    already-imported module as a constructor argument instead of assuming a
+    module-level `webview` name exists, so this class stays valid to define
+    (and, e.g., unit-test) independent of whether main() has run yet.
+    """
+
+    def __init__(self, webview_module):
+        self._webview = webview_module
+
+    def choose_folder(self) -> str | None:
+        result = self._webview.windows[0].create_file_dialog(self._webview.FileDialog.FOLDER)
+        return result[0] if result else None
+
+    def choose_aif_file(self) -> str | None:
+        """The landing page's "aif.json 경로" field -- picks an
+        *existing* file, so this is an OPEN dialog. Filtered to
+        .json since that's what pack ever writes, but "모든 파일"
+        is still offered in case someone renamed/moved it.
+        """
+        result = self._webview.windows[0].create_file_dialog(
+            self._webview.FileDialog.OPEN, file_types=_JSON_FILE_TYPES
+        )
+        return result[0] if result else None
+
+    def choose_save_file(self) -> str | None:
+        """The pack form's "출력 경로" field -- the target doesn't
+        exist yet (save_aif() creates it), so this is a SAVE
+        dialog, not OPEN: it lets a human pick/type a destination
+        filename in a folder they browse to, same as any other
+        app's "save as".
+        """
+        result = self._webview.windows[0].create_file_dialog(
+            self._webview.FileDialog.SAVE, save_filename="project.json", file_types=_JSON_FILE_TYPES
+        )
+        return result[0] if result else None
+
+
+def _confirm_close_if_reviewing(window) -> bool | None:
+    """Registered on window.events.closing (see the pywebview source: a
+    handler returning False cancels the close, anything else lets it
+    proceed). app.js's beforeunload guard protects an in-page reload/
+    navigation during a pack review, but clicking this native window's own
+    close button bypasses the DOM entirely -- pywebview tears the webview
+    down directly rather than navigating it away, so beforeunload never
+    fires. This is the same gap closed for --no-window/plain-browser-tab
+    mode by the browser's own close-tab prompt; the native window needs its
+    own guard because there's no browser chrome to provide one.
+
+    Checks pack_service directly (has_reviewing_job()) instead of
+    round-tripping into page JS via evaluate_js() -- calling that from a
+    closing handler risks deadlocking against the webview's own message
+    loop on some backends, while create_confirmation_dialog below is the
+    same safe pattern pywebview's own built-in confirm_close option uses
+    internally (a native modal, not a JS call).
+
+    Takes `window` as a parameter (not closed over) so it can be registered
+    the same way _Api is used -- module-level, not nested inside main().
+    """
+    if not pack_service.has_reviewing_job():
+        return None
+    return window.create_confirmation_dialog(
+        "검토 중인 작업이 있습니다",
+        "저장하지 않은 패킹 검토 내용(이름/가이드/룰/요약)이 있습니다. 그래도 닫으시겠습니까?",
+    )
+
+
 def _find_free_port(preferred: int) -> int:
     """Returns `preferred` if nothing's listening on it yet, otherwise the
     next free port after it (checked up to 50 ports ahead).
@@ -363,75 +445,8 @@ def main():
     else:
         import webview
 
-        _JSON_FILE_TYPES = ("JSON 파일 (*.json)", "모든 파일 (*.*)")
-
-        class _Api:
-            """Exposed to the frontend as window.pywebview.api once the
-            window below is created with js_api=... -- lets app.js open a
-            real OS file/folder-picker dialog instead of requiring a human
-            to type a path by hand, for every path field the landing page
-            has. Only available in this (default) windowed mode:
-            --no-window opens a plain browser tab with no pywebview bridge,
-            so app.js falls back to manual entry there (see its hasApi()).
-            """
-
-            def choose_folder(self) -> str | None:
-                result = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-                return result[0] if result else None
-
-            def choose_aif_file(self) -> str | None:
-                """The landing page's "aif.json 경로" field -- picks an
-                *existing* file, so this is an OPEN dialog. Filtered to
-                .json since that's what pack ever writes, but "모든 파일"
-                is still offered in case someone renamed/moved it.
-                """
-                result = webview.windows[0].create_file_dialog(
-                    webview.FileDialog.OPEN, file_types=_JSON_FILE_TYPES
-                )
-                return result[0] if result else None
-
-            def choose_save_file(self) -> str | None:
-                """The pack form's "출력 경로" field -- the target doesn't
-                exist yet (save_aif() creates it), so this is a SAVE
-                dialog, not OPEN: it lets a human pick/type a destination
-                filename in a folder they browse to, same as any other
-                app's "save as".
-                """
-                result = webview.windows[0].create_file_dialog(
-                    webview.FileDialog.SAVE, save_filename="project.json", file_types=_JSON_FILE_TYPES
-                )
-                return result[0] if result else None
-
-        window = webview.create_window("Ziplex", url, width=1100, height=800, js_api=_Api())
-
-        def confirm_close_if_reviewing():
-            """Registered on window.events.closing (see the pywebview
-            source: a handler returning False cancels the close, anything
-            else lets it proceed). app.js's beforeunload guard protects an
-            in-page reload/navigation during a pack review, but clicking
-            this native window's own close button bypasses the DOM
-            entirely -- pywebview tears the webview down directly rather
-            than navigating it away, so beforeunload never fires. This is
-            the same gap closed for --no-window/plain-browser-tab mode by
-            the browser's own close-tab prompt; the native window needs its
-            own guard because there's no browser chrome to provide one.
-
-            Checks pack_service directly (has_reviewing_job()) instead of
-            round-tripping into page JS via evaluate_js() -- calling that
-            from a closing handler risks deadlocking against the webview's
-            own message loop on some backends, while create_confirmation_dialog
-            below is the same safe pattern pywebview's own built-in
-            confirm_close option uses internally (a native modal, not a JS
-            call).
-            """
-            if not pack_service.has_reviewing_job():
-                return
-            return window.create_confirmation_dialog(
-                "검토 중인 작업이 있습니다",
-                "저장하지 않은 패킹 검토 내용(이름/가이드/룰/요약)이 있습니다. 그래도 닫으시겠습니까?",
-            )
-
-        window.events.closing += confirm_close_if_reviewing
+        window = webview.create_window("Ziplex", url, width=1100, height=800, js_api=_Api(webview))
+        window.events.closing += lambda: _confirm_close_if_reviewing(window)
         webview.start()
 
 

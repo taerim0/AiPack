@@ -419,3 +419,83 @@ def test_find_free_port_skips_a_port_in_use():
         found = gui_server._find_free_port(occupied_port)
         assert found != occupied_port
         assert occupied_port < found <= occupied_port + 49
+
+
+class _FakeFileDialog:
+    FOLDER = "folder"
+    OPEN = "open"
+    SAVE = "save"
+
+
+class _FakeWindow:
+    def __init__(self, dialog_result=None, confirm_result=None):
+        self._dialog_result = dialog_result
+        self.confirm_calls = []
+        self._confirm_result = confirm_result
+        self.create_file_dialog_calls = []
+
+    def create_file_dialog(self, *args, **kwargs):
+        self.create_file_dialog_calls.append((args, kwargs))
+        return self._dialog_result
+
+    def create_confirmation_dialog(self, title, message):
+        self.confirm_calls.append((title, message))
+        return self._confirm_result
+
+
+class _FakeWebview:
+    FileDialog = _FakeFileDialog
+
+    def __init__(self, window):
+        self.windows = [window]
+
+
+# _Api and _confirm_close_if_reviewing used to be nested inside main() --
+# defined at module level now specifically so they're reachable like this,
+# with a fake `webview` module standing in for the real one (which needs an
+# actual OS window and can't run in a test process).
+
+def test_api_choose_folder_returns_the_picked_path():
+    window = _FakeWindow(dialog_result=["C:/some/project"])
+    api = gui_server._Api(_FakeWebview(window))
+    assert api.choose_folder() == "C:/some/project"
+    assert window.create_file_dialog_calls[0][0] == ("folder",)
+
+
+def test_api_choose_folder_returns_none_when_dialog_cancelled():
+    window = _FakeWindow(dialog_result=None)
+    api = gui_server._Api(_FakeWebview(window))
+    assert api.choose_folder() is None
+
+
+def test_api_choose_aif_file_uses_an_open_dialog_filtered_to_json():
+    window = _FakeWindow(dialog_result=["C:/some/out.json"])
+    api = gui_server._Api(_FakeWebview(window))
+    assert api.choose_aif_file() == "C:/some/out.json"
+    args, kwargs = window.create_file_dialog_calls[0]
+    assert args == ("open",)
+    assert kwargs["file_types"] == gui_server._JSON_FILE_TYPES
+
+
+def test_api_choose_save_file_uses_a_save_dialog():
+    window = _FakeWindow(dialog_result=["C:/some/new.json"])
+    api = gui_server._Api(_FakeWebview(window))
+    assert api.choose_save_file() == "C:/some/new.json"
+    args, kwargs = window.create_file_dialog_calls[0]
+    assert args == ("save",)
+    assert kwargs["save_filename"] == "project.json"
+
+
+def test_confirm_close_skips_the_dialog_when_no_job_is_reviewing(monkeypatch):
+    monkeypatch.setattr(gui_server.pack_service, "has_reviewing_job", lambda: False)
+    window = _FakeWindow()
+    assert gui_server._confirm_close_if_reviewing(window) is None
+    assert window.confirm_calls == []
+
+
+def test_confirm_close_shows_a_native_dialog_when_a_job_is_reviewing(monkeypatch):
+    monkeypatch.setattr(gui_server.pack_service, "has_reviewing_job", lambda: True)
+    window = _FakeWindow(confirm_result=False)  # user chose "cancel the close"
+    result = gui_server._confirm_close_if_reviewing(window)
+    assert result is False
+    assert len(window.confirm_calls) == 1
