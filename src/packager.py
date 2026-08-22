@@ -3,7 +3,7 @@ from pathlib import Path
 
 from file.collector import collect_files
 from file.scanner import scan_files
-from file.selector import select_files
+from file.selector import select_files, review_dangerous_files
 from file.textutil import relative_key as _rel_key
 from extract.code.extractor import extract_signatures, extract_dependencies, extract_api
 from extract.code.compressor import compress_file
@@ -153,16 +153,49 @@ def pack(
     print("🔒 보안 스캔 중...")
     scan_result = scan_files(files)
     safe_files = scan_result["safe"]
+    dangerous = scan_result["dangerous"]
+    included_anyway = []
 
-    if scan_result["dangerous"]:
-        print(f"  ⚠️  민감 파일 제외: {len(scan_result['dangerous'])}개")
-        for f in scan_result["dangerous"]:
-            print(f"  ❌ {Path(f).name}")
+    if dangerous:
+        # Only ever asked when interactive (--auto-correct's *absence*) --
+        # the same gate as every other "can we ask the terminal something"
+        # decision already in this pipeline (checkpoint resume,
+        # handle_llm_failure, the regenerate-cached-summary confirm),
+        # independent of `auto` -- auto only changes *how* the already-safe
+        # set gets selected below, not whether a human can still be asked
+        # about a security decision. Non-interactive callers (--auto-correct)
+        # keep today's behavior: excluded, no prompt, no way back short of
+        # a second interactive run.
+        included_anyway = review_dangerous_files(dangerous, root_path) if interactive else []
+        if included_anyway:
+            safe_files = safe_files + included_anyway
+
+        excluded = [d["file"] for d in dangerous if d["file"] not in included_anyway]
+        if excluded:
+            print(f"  ⚠️  민감 파일 제외: {len(excluded)}개")
+            for f in excluded:
+                print(f"  ❌ {Path(f).name}")
 
     # 3. Select files
     if preselected is not None:
+        # Trusts a name from `dangerous` too, not just safe_files: naming
+        # one here already *is* the caller's explicit decision -- the GUI's
+        # file-selection screen shows the same reason/matched-line detail
+        # review_dangerous_files() prints above, just as a checkbox a human
+        # ticks before ever calling start_pack_job(), not a prompt pack()
+        # itself raises. A scripted/CI caller that builds `preselected`
+        # without a human in the loop simply never names a dangerous file's
+        # key in the first place.
+        #
+        # Excludes anything already folded into safe_files via
+        # included_anyway above -- interactive=True plus a preselected list
+        # both naming the same dangerous file isn't a real call site today
+        # (the GUI always passes interactive=False), but without this a
+        # file approved both ways would appear twice in `candidates` and
+        # get selected (and summarized) twice.
         wanted = set(preselected)
-        selected = [f for f in safe_files if _rel_key(f, root) in wanted]
+        candidates = safe_files + [d["file"] for d in dangerous if d["file"] not in included_anyway]
+        selected = [f for f in candidates if _rel_key(f, root) in wanted]
         print(f"  ✅ {len(selected)}개 파일 선택됨 (지정된 목록 기준)")
     elif auto:
         selected = safe_files

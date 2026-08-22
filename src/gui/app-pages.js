@@ -39,6 +39,7 @@ function renderLanding() {
   const packButton = el("button", { class: "hidden", text: "패킹 시작" });
 
   let selectableCheckboxes = [];
+  let dangerousCheckboxes = [];
 
   loadFilesButton.addEventListener("click", async () => {
     const project_path = packProjInput.value.trim();
@@ -49,6 +50,7 @@ function renderLanding() {
     try {
       const data = await api("/api/select_files", { project_path });
       selectableCheckboxes = [];
+      dangerousCheckboxes = [];
       fileListBox.innerHTML = "";
 
       if (!data.safe.length) {
@@ -71,11 +73,43 @@ function renderLanding() {
           list.appendChild(el("label", { class: "file-checklist-row" }, [cb, el("span", { text: name })]));
         }
         fileListBox.appendChild(list);
+      }
+      // Shown whenever there's anything selectable at all -- safe files,
+      // or (an edge case, but a real one: a project that's nothing but
+      // fixture/sample files) only a dangerous one a human can still
+      // choose to override below.
+      if (data.safe.length || data.dangerous.length) {
         packButton.classList.remove("hidden");
       }
 
+      // Sensitive files used to just disappear here with a bare count --
+      // "trust us" with no way back for a false positive (a fixture file,
+      // a sample .env with placeholder values). Each one now shows *why*
+      // it was flagged (scanner.py's scan_file() reason/matched line, not
+      // the whole file -- enough to judge it without opening the file) and
+      // an opt-in checkbox, unchecked by default and deliberately kept out
+      // of `selectableCheckboxes` (so "전체" above can never sweep one in
+      // by accident) -- see packButton's click handler below for how the
+      // two lists merge back into one selected_files array.
       if (data.dangerous.length) {
-        fileListBox.appendChild(el("p", { class: "muted", text: `⚠️ 민감 파일로 감지되어 제외됨: ${data.dangerous.length}개` }));
+        const box = el("div", { class: "dangerous-files" }, [
+          el("p", { class: "muted", text: `⚠️ 민감 파일 ${data.dangerous.length}개 감지됨 (기본 제외 -- 아래에서 확인 후 필요하면 포함)` }),
+        ]);
+        for (const entry of data.dangerous) {
+          const cb = el("input", { type: "checkbox", "data-name": entry.file });
+          dangerousCheckboxes.push(cb);
+
+          const detail = [el("div", { class: "dangerous-file-reason", text: entry.reason || "민감 정보로 추정됨" })];
+          if (entry.line && entry.matched_text != null) {
+            detail.push(el("div", { class: "dangerous-file-line", text: `${entry.line}번째 줄: ${entry.matched_text}` }));
+          }
+
+          box.appendChild(el("div", { class: "dangerous-file-row" }, [
+            el("label", { class: "file-checklist-row" }, [cb, el("span", { text: entry.file })]),
+            el("div", { class: "dangerous-file-detail" }, detail),
+          ]));
+        }
+        fileListBox.appendChild(box);
       }
       fileListBox.classList.remove("hidden");
     } catch (e) {
@@ -88,7 +122,14 @@ function renderLanding() {
 
   packButton.addEventListener("click", async () => {
     const project_path = packProjInput.value.trim();
-    const selected_files = selectableCheckboxes.filter(cb => cb.checked).map(cb => cb.dataset.name);
+    // Naming a dangerous file here is this screen's equivalent of the
+    // CLI's review_dangerous_files() prompt -- packager.pack()'s
+    // `preselected` handling trusts either list equally (see its own
+    // comment), since ticking this box after seeing the same reason/
+    // matched-line detail already *is* the human decision that prompt
+    // represents, just made through a checkbox instead of a terminal menu.
+    const selected_files = [...selectableCheckboxes, ...dangerousCheckboxes]
+      .filter(cb => cb.checked).map(cb => cb.dataset.name);
     if (!selected_files.length) {
       packError.textContent = "선택된 파일이 없습니다";
       packError.classList.remove("hidden");

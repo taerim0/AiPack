@@ -49,7 +49,9 @@ def test_list_selectable_files_splits_safe_and_dangerous(tmp_path):
     result = pack_service.list_selectable_files(str(project))
 
     assert "main.py" in result["safe"]
-    assert "secret.env" in result["dangerous"]
+    dangerous_names = [d["file"] for d in result["dangerous"]]
+    assert dangerous_names == ["secret.env"]
+    assert result["dangerous"][0]["matched_text"] == 'API_KEY = "abc123"'
 
 
 def test_start_pack_job_pauses_in_reviewing_state(tmp_path, monkeypatch):

@@ -281,6 +281,109 @@ def test_pack_text_reference_does_not_hijack_the_summary_prompt(tmp_path, monkey
     )
 
 
+def test_pack_excludes_a_dangerous_file_non_interactively_with_no_prompt(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    def _unexpected_input(*a, **k):
+        raise AssertionError("input() must not be called when interactive=False")
+
+    monkeypatch.setattr(builtins, "input", _unexpected_input)
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "secret.env", 'API_KEY = "abc123"\n')
+
+    aif = packager.pack(str(project), auto=True, interactive=False)
+
+    assert set(aif["files"].keys()) == {"main.py"}  # secret.env stays excluded, no prompt raised
+
+
+def test_pack_interactive_review_includes_a_dangerous_file_when_chosen(tmp_path, monkeypatch):
+    # Gated on `interactive` (--auto-correct's absence), not `auto` -- same
+    # switch as every other "can we ask the terminal something" decision
+    # already in pack() (checkpoint resume, handle_llm_failure). `auto=True`
+    # here on purpose: it only changes *how* the safe set gets selected,
+    # not whether this review can still happen.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(builtins, "input", lambda: "1")  # include the one flagged file
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "secret.env", 'API_KEY = "abc123"\n')
+
+    aif = packager.pack(str(project), auto=True, interactive=True)
+
+    assert set(aif["files"].keys()) == {"main.py", "secret.env"}
+
+
+def test_pack_interactive_review_declines_by_default_on_blank_input(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(builtins, "input", lambda: "")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "secret.env", 'API_KEY = "abc123"\n')
+
+    aif = packager.pack(str(project), auto=True, interactive=True)
+
+    assert set(aif["files"].keys()) == {"main.py"}
+
+
+def test_pack_preselected_can_name_a_dangerous_file_directly(tmp_path, monkeypatch):
+    # The GUI's file-selection screen shows the same reason/matched-line
+    # detail review_dangerous_files() prints, as a checkbox a human ticks
+    # *before* ever calling pack() -- naming the file in `preselected` here
+    # already *is* that decision, so this has to work with no prompt at all
+    # (interactive=False, matching how the GUI always calls pack()).
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    def _unexpected_input(*a, **k):
+        raise AssertionError("input() must not be called for a preselected file")
+
+    monkeypatch.setattr(builtins, "input", _unexpected_input)
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "secret.env", 'API_KEY = "abc123"\n')
+
+    aif = packager.pack(
+        str(project), interactive=False, preselected=["main.py", "secret.env"]
+    )
+
+    assert set(aif["files"].keys()) == {"main.py", "secret.env"}
+
+
+def test_pack_does_not_duplicate_a_dangerous_file_approved_both_ways(tmp_path, monkeypatch, capsys):
+    # Found by code review: interactive review folding a dangerous file
+    # into safe_files, *and* preselected separately naming that same file,
+    # used to append it to `candidates` twice -- not a real call site today
+    # (the GUI always passes interactive=False), but pack()'s own
+    # parameters allow the combination. The final aif["files"] dict hides
+    # the duplication either way (it's keyed by path, so a double entry in
+    # `selected` just gets processed twice and overwrites itself) -- the
+    # printed "N개 파일 선택됨" count, taken directly from len(selected)
+    # right where the bug was, is what actually exposes it (3 instead of 2
+    # before this fix).
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(builtins, "input", lambda: "1")  # include the one flagged file
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    _write(project / "secret.env", 'API_KEY = "abc123"\n')
+
+    aif = packager.pack(
+        str(project), interactive=True, preselected=["main.py", "secret.env"]
+    )
+
+    assert set(aif["files"].keys()) == {"main.py", "secret.env"}
+    assert "✅ 2개 파일 선택됨" in capsys.readouterr().out
+
+
 def test_pack_scopes_files_via_ziplex_json_include(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")

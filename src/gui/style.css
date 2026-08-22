@@ -158,6 +158,24 @@ h2 { font-size: 1.1em; color: var(--muted); margin-top: 0; }
   cursor: pointer;
 }
 
+.dangerous-files { margin: 6px 0 14px; }
+.dangerous-file-row {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+.dangerous-file-row .file-checklist-row { padding: 0 0 4px; }
+.dangerous-file-detail {
+  margin-left: 24px;
+  font-family: var(--mono);
+  font-size: 0.82em;
+  color: var(--muted);
+}
+.dangerous-file-line { overflow-wrap: anywhere; }
+
+
 .rules-edit { list-style: none; padding: 0; margin: 6px 0 14px; }
 .rules-edit li {
   display: flex;
