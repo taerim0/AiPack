@@ -265,6 +265,50 @@ def test_api_pack_no_llm_flag_reaches_pack_service(client, tmp_path, monkeypatch
     assert review["project"]["prompt"] == packager.STRUCTURAL_ONLY_NOTE
 
 
+def test_api_pack_status_retry_params_can_resume_a_failed_job_over_http(client, tmp_path, monkeypatch):
+    # Item 8: the pack-progress screen used to have no way forward at all
+    # once a job landed in "error" (a repeated LLM failure) -- retry_params
+    # in /api/pack/status is what app-pack.js's retry button reposts to
+    # /api/pack, and this is the route-level proof that round-trip actually
+    # resumes from the checkpoint instead of starting over. pack_service.py's
+    # own test suite covers the same behavior below the HTTP layer.
+    class _EmptyRulesProvider(llm.MockProvider):
+        def generate(self, prompt: str, retry: int = 5) -> str:
+            if '"rules"' in prompt:
+                return "{}"
+            return super().generate(prompt, retry=retry)
+
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+    monkeypatch.setattr(llm, "_provider", _EmptyRulesProvider())
+    start = client.post("/api/pack", json={"project_path": str(project), "selected_files": ["main.py"]})
+    job_id = start.get_json()["job_id"]
+    status = _wait_for_job(client, job_id)
+    assert status["state"] == "error"
+    retry_params = status["retry_params"]
+    assert retry_params["project_path"] == str(project)
+
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    retry = client.post("/api/pack", json=retry_params)
+    assert retry.status_code == 200
+    retry_job_id = retry.get_json()["job_id"]
+    retry_status = _wait_for_job(client, retry_job_id)
+    assert retry_status["state"] == "reviewing"
+
+    # _wait_for_job's own returned "log" is only the tail since its last
+    # poll tick (it advances `since` each time, same pagination the real
+    # frontend uses) -- refetch from since=0 for the full accumulated log
+    # instead of misreading that tail as "nothing was restored".
+    full_log = client.get(
+        "/api/pack/status", query_string={"job_id": retry_job_id, "since": 0}
+    ).get_json()["log"]
+    assert any("체크포인트에서 복원" in line for line in full_log)
+
+
 def test_api_pack_link_adds_an_edge_and_rejects_cycles(client, tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
