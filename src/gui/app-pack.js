@@ -11,9 +11,40 @@ async function renderPackJob(jobId) {
   const logPre = el("pre", { class: "pack-log" });
   const statusBadge = el("span", { class: "pack-status running", text: "진행 중..." });
   const body = el("div");
+
+  // "running" used to have no controls at all -- once a pack started, the
+  // only way out was closing the window. request_cancel() (see
+  // pack_service.py) lets it stop at its next checkpoint instead: "저장 후
+  // 취소" checkpoints wherever analysis has gotten to (a later pack on the
+  // same project auto-resumes from it, same as a failed one already would),
+  // "그냥 취소" discards it. Hidden once the job leaves "running" (see
+  // poll() below) -- nothing left running to stop by then.
+  const stopSaveButton = el("button", { class: "secondary", text: "저장 후 취소" });
+  const stopDiscardButton = el("button", { class: "secondary", text: "그냥 취소" });
+  const stopRow = el("div", { class: "copy-row" }, [stopSaveButton, stopDiscardButton]);
+
+  async function requestStop(save) {
+    stopSaveButton.disabled = true;
+    stopDiscardButton.disabled = true;
+    try {
+      await apiPost("/api/pack/stop", { job_id: jobId, save });
+    } catch (e) {
+      // best-effort -- if the job already left "running" (finished or
+      // failed on its own just before this landed), the next poll tick
+      // already shows whatever it actually ended up as.
+    }
+  }
+  stopSaveButton.addEventListener("click", () => {
+    if (confirm("지금까지 진행 상황을 저장하고 중단할까요? 다음에 같은 프로젝트를 pack하면 이어서 진행됩니다.")) requestStop(true);
+  });
+  stopDiscardButton.addEventListener("click", () => {
+    if (confirm("저장하지 않고 중단할까요? 지금까지 진행 상황이 모두 사라집니다.")) requestStop(false);
+  });
+
   const card = el("div", { class: "card" }, [
     el("h1", { text: "패킹 진행 상황" }),
     statusBadge,
+    stopRow,
     el("h3", { text: "로그" }),
     logPre,
     body,
@@ -246,6 +277,11 @@ async function renderPackJob(jobId) {
       logPre.scrollTop = logPre.scrollHeight;
     }
     since = data.log_len;
+
+    // Stop controls only make sense while something's actually running to
+    // stop -- request_cancel() itself already 404s past this point, but
+    // hiding the buttons avoids a click that's guaranteed to fail.
+    stopRow.classList.toggle("hidden", data.state !== "running");
 
     // "finalizing" (pack_service.py's transient state while submit_review()
     // commits) is only ever observed here if a reload/second-tab poll lands

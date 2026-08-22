@@ -11,6 +11,7 @@ and _find_free_port()'s fallback when the requested port is already taken.
 
 import json
 import socket
+import threading
 import time
 from unittest import mock
 
@@ -306,6 +307,52 @@ def test_api_pack_cancel_discards_a_reviewing_job(client, tmp_path, monkeypatch)
 
     status = client.get("/api/pack/status", query_string={"job_id": job_id}).get_json()
     assert status["state"] == "error"
+
+
+def test_api_pack_stop_unknown_job_is_404(client):
+    res = client.post("/api/pack/stop", json={"job_id": "no-such-job", "save": True})
+    assert res.status_code == 404
+
+
+class _BlockingProvider(llm.MockProvider):
+    """Blocks generate() until the test releases it -- MockProvider alone
+    answers instantly, so a real pack job would reach "reviewing" before a
+    test could ever hit /api/pack/stop while it's genuinely still "running".
+    """
+
+    def __init__(self, started: threading.Event, release: threading.Event):
+        self.started = started
+        self.release = release
+
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        self.started.set()
+        self.release.wait(timeout=5)
+        return super().generate(prompt, retry)
+
+
+def test_api_pack_stop_saves_and_stops_a_running_job(client, tmp_path, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(llm, "_provider", _BlockingProvider(started, release))
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+    start = client.post("/api/pack", json={"project_path": str(project), "selected_files": ["main.py"]})
+    job_id = start.get_json()["job_id"]
+    assert started.wait(timeout=5), "generate() was never entered"
+
+    stop = client.post("/api/pack/stop", json={"job_id": job_id, "save": True})
+    assert stop.status_code == 200
+    assert stop.get_json() == {"ok": True}
+
+    release.set()
+    status = _wait_for_job(client, job_id)
+
+    assert status["state"] == "error"
+    assert "체크포인트에 저장됨" in status["error"]
+    assert (tmp_path / "checkpoint" / "project.json").exists()
 
 
 def test_api_overview(client, tmp_path):

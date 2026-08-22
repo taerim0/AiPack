@@ -262,6 +262,24 @@ def api_pack_cancel():
     return jsonify({"ok": True})
 
 
+@app.route("/api/pack/stop", methods=["POST"])
+def api_pack_stop():
+    """The "running"-state counterpart to /api/pack/cancel above (which only
+    ever applies to a paused "reviewing" job -- there's nothing running to
+    stop by then). `save: true` checkpoints wherever analysis has gotten to
+    (packager.pack()'s check_cancelled param, via
+    pack_service.request_cancel()) so a later pack on the same project
+    auto-resumes from it; `save: false` just discards it. Not instant --
+    the job keeps polling as "running" until pack() reaches its next
+    checkpoint and actually returns.
+    """
+    data = request.get_json(silent=True) or {}
+    job_id = data.get("job_id")
+    if not job_id or not pack_service.request_cancel(job_id, bool(data.get("save"))):
+        return jsonify({"error": f"중단할 수 있는 작업이 아닙니다: {job_id}"}), 404
+    return jsonify({"ok": True})
+
+
 @app.route("/api/pack/status")
 def api_pack_status():
     job_id = request.args["job_id"]

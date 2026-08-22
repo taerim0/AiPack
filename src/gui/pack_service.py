@@ -305,19 +305,75 @@ def _build_review(aif: dict) -> dict:
     }
 
 
+def _check_cancelled_for(job: dict):
+    """Builds packager.pack()'s `check_cancelled` callback for one job --
+    reads (and clears) `job["cancel_action"]` under `job["lock"]`, the same
+    per-job-lock discipline every other field on this dict already follows.
+    Clearing it on read (not just on act) means a stray second poll tick
+    that raced the request in only ever sees it once -- pack() itself stops
+    at the very next checkpoint after the first non-None answer regardless,
+    so there's nothing left to consume a second time in practice, but this
+    keeps that true by construction rather than by accident. Separately
+    records the answer into `job["cancel_result"]` (never cleared) so
+    _run() can tell *why* pack() came back empty after the fact, once
+    outside the loop that's actually polling this.
+    """
+    def check() -> str | None:
+        with job["lock"]:
+            action = job.get("cancel_action")
+            if action:
+                job["cancel_action"] = None
+                job["cancel_result"] = action
+            return action
+    return check
+
+
+def request_cancel(job_id: str, save: bool) -> bool:
+    """Asks a "running" job to stop at its next check_cancelled() checkpoint
+    (see packager.pack()'s own docstring for where those are) -- the only
+    way to interrupt a background pack thread at all, since a real Python
+    thread can't be safely killed from outside once started. Returns False
+    (no-op) if job_id is unknown or the job isn't currently "running" --
+    cancel_job() is the equivalent for a "reviewing" job, which has nothing
+    actually running to stop.
+
+    Not instant: `_run()`'s log keeps growing (and /api/pack/status keeps
+    reporting "running") until pack() actually reaches its next checkpoint
+    and returns -- a caller should keep polling the normal way rather than
+    assuming an immediate state change.
+    """
+    try:
+        job = _lookup_job(job_id)
+    except ValueError:
+        return False
+    with job["lock"]:
+        if job["state"] != "running":
+            return False
+        job["cancel_action"] = "save" if save else "discard"
+    return True
+
+
 def _run(job: dict, project_path: str, no_cache: bool, no_llm: bool, selected_files: list[str]) -> None:
     try:
         with _capture_for_job(job):
             aif = packager.pack(
                 project_path, interactive=False, use_cache=not no_cache, use_llm=not no_llm,
-                preselected=selected_files
+                preselected=selected_files, check_cancelled=_check_cancelled_for(job),
             )
             if not aif:
-                # pack() returns {} when nothing was selected, or when a
-                # repeated LLM failure hit handle_llm_failure()'s
-                # non-interactive path (checkpoint saved, run aborted) --
-                # either way there's nothing to review; the log already has
-                # the specific reason printed into it.
+                with job["lock"]:
+                    cancel_result = job.get("cancel_result")
+                # pack() returns {} for a few different reasons -- nothing
+                # was selected, a repeated LLM failure hit
+                # handle_llm_failure()'s non-interactive path, or (new)
+                # request_cancel() asked it to stop. cancel_result (only
+                # ever set by the third case) is what tells these apart
+                # after the fact, since pack() itself just returns the same
+                # empty {} either way.
+                if cancel_result == "save":
+                    raise RuntimeError("사용자가 취소함 -- 체크포인트에 저장됨 (다음 실행 시 이어서 진행 가능)")
+                if cancel_result == "discard":
+                    raise RuntimeError("사용자가 취소함 -- 저장하지 않음")
                 raise RuntimeError(
                     "패킹이 완료되지 않았습니다 (선택된 파일이 없거나, "
                     "반복된 LLM 오류로 체크포인트에 저장 후 중단됨). 로그를 확인하세요."
@@ -365,6 +421,8 @@ def start_pack_job(
         "project_path": project_path,
         "output_path": output_path,
         "lock": threading.Lock(),
+        "cancel_action": None,  # set by request_cancel(), consumed by _check_cancelled_for()
+        "cancel_result": None,  # set once cancel_action is consumed, read by _run() after pack() returns
     }
     with _jobs_lock:
         _jobs[job_id] = job

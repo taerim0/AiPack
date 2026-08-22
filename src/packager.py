@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Callable
 
 from file.collector import collect_files
 from file.scanner import scan_files
@@ -58,6 +59,30 @@ def _confirm_regenerate_failed_summaries(failed_names: list[str], interactive: b
     return choice == "1"
 
 
+def _maybe_stop(
+    check_cancelled: Callable[[], str | None] | None,
+    root_path: str, root: Path, files_data: dict, rules: list | None = None, prompt: str = "",
+) -> bool:
+    """True if `check_cancelled` says to stop -- checkpointing first
+    (reusing checkpoint.build_snapshot(), the exact shape handle_llm_failure()
+    already checkpoints, so a stopped-and-saved run auto-resumes next time
+    exactly like a failed one does) unless it said "discard". False (never
+    stops) when check_cancelled wasn't given at all -- the CLI's synchronous
+    run has no external thread to ask it to stop from in the first place;
+    only a caller that runs pack() on a background thread (the GUI -- see
+    gui/pack_service.py's request_cancel()) needs this, since a real Python
+    thread can't be safely killed from outside once started.
+    """
+    if check_cancelled is None:
+        return False
+    action = check_cancelled()
+    if action is None:
+        return False
+    if action == "save":
+        ckpt.save_checkpoint(root_path, ckpt.build_snapshot(root, files_data, rules, prompt))
+    return True
+
+
 def pack(
     root_path: str,
     auto: bool = False,
@@ -67,6 +92,7 @@ def pack(
     preselected: list[str] | None = None,
     include: list[str] | None = None,
     ignore: list[str] | None = None,
+    check_cancelled: Callable[[], str | None] | None = None,
 ) -> dict:
     """include/ignore are extra glob patterns (gitignore syntax -- see
     collect_files()'s own docstring for exactly how each is applied),
@@ -133,6 +159,22 @@ def pack(
     placeholder never got a real answer in the first place, so it isn't
     "reuse" so much as re-caching a miss -- see
     _confirm_regenerate_failed_summaries() below.
+
+    check_cancelled, if given, is polled at a few natural checkpoints (once
+    per file during extraction, once more right before the LLM summary
+    step, and once right after it) and should return None to keep going, or
+    "save"/"discard" to stop early -- see _maybe_stop()'s own docstring for
+    exactly what each does. The third checkpoint exists specifically so a
+    stop requested *during* the summary step (typically the longest-running
+    one, and the one with no way to interrupt its own thread pool mid-
+    flight) still takes effect the moment that step finishes, instead of
+    sitting unconsumed for the rest of the run. Only meaningful for a caller running pack() on its own background
+    thread with no other way to interrupt it (gui/pack_service.py's
+    "running"-state stop buttons); a plain CLI run has no such caller and
+    just leaves this unset, same as `interactive` prompts never firing for
+    the GUI's own non-interactive `pack()` calls. Not instant either way --
+    a network-bound LLM call already in flight when a stop is requested
+    still completes before the next checkpoint is reached.
     """
     root = Path(root_path)
 
@@ -245,6 +287,9 @@ def pack(
     text_refs_by_path: dict[str, list[str]] = {}
 
     for file_path in selected:
+        if _maybe_stop(check_cancelled, root_path, root, files_data, restored_rules, restored_prompt):
+            return {}
+
         name = _rel_key(file_path, root)
         text_refs_by_path[file_path] = find_text_references_for_file(file_path, name, all_names)
 
@@ -277,6 +322,9 @@ def pack(
             print(f"  ♻️  {name} (변경 없음, 이전 요약 재사용)")
         else:
             print(f"  ✅ {name}")
+
+    if _maybe_stop(check_cancelled, root_path, root, files_data, restored_rules, restored_prompt):
+        return {}
 
     # 5. Summary generation -- LLM-based (the default) or, with use_llm=False,
     # a deterministic structural fallback that never touches the network at
@@ -315,6 +363,16 @@ def pack(
     # this to decide which summaries are worth prompting a human about.
     for data in files_data.values():
         data["confidence"] = estimate_confidence(data["summary"], data["signatures"])
+
+    # A cancel requested *during* the summary step above (typically the
+    # longest-running one) only gets checked once that step actually
+    # finishes -- there's no way to interrupt generate_summaries()'s own
+    # thread pool mid-flight from here. Without this checkpoint, a request
+    # landing there would sit in job["cancel_action"] unconsumed until
+    # pack() finishes on its own (reviewing state), never actually taking
+    # effect.
+    if _maybe_stop(check_cancelled, root_path, root, files_data, restored_rules, restored_prompt):
+        return {}
 
     # extract rules (restored from checkpoint if available)
     rules = restored_rules
