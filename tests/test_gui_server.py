@@ -318,6 +318,49 @@ def test_api_dependents(client, tmp_path):
     assert res.get_json() == ["b.py"]
 
 
+def test_api_relationships(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    res = client.get("/api/relationships", query_string={"aif_path": aif_path})
+    assert res.get_json() == {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": ["a.py"], "external": []},
+    }
+
+
+def test_api_relationships_link(client, tmp_path):
+    # _write_sample_aif already has b.py -> a.py, so link a.py -> b.py here
+    # would close a cycle (see test_api_relationships_link_rejects_a_cycle
+    # below) -- unlink that edge first so this test exercises a plain link.
+    aif_path = _write_sample_aif(tmp_path)
+    client.post("/api/relationships/unlink", json={"aif_path": aif_path, "file": "b.py", "target": "a.py"})
+
+    res = client.post("/api/relationships/link", json={"aif_path": aif_path, "file": "a.py", "target": "b.py"})
+    assert res.status_code == 200
+    assert res.get_json()["relationships"]["a.py"]["internal"] == ["b.py"]
+
+    # persisted -- a second, independent read sees the same edit
+    reread = client.get("/api/relationships", query_string={"aif_path": aif_path})
+    assert reread.get_json()["a.py"]["internal"] == ["b.py"]
+
+
+def test_api_relationships_link_rejects_a_cycle(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)  # b.py already depends on a.py
+    res = client.post("/api/relationships/link", json={"aif_path": aif_path, "file": "a.py", "target": "b.py"})
+    assert res.status_code == 409
+
+
+def test_api_relationships_link_requires_all_fields(client):
+    res = client.post("/api/relationships/link", json={"aif_path": "x.json"})
+    assert res.status_code == 400
+
+
+def test_api_relationships_unlink(client, tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    res = client.post("/api/relationships/unlink", json={"aif_path": aif_path, "file": "b.py", "target": "a.py"})
+    assert res.status_code == 200
+    assert res.get_json()["relationships"]["b.py"]["internal"] == []
+
+
 def test_api_blast_radius(client, tmp_path):
     aif_path = _write_sample_aif(tmp_path)
     res = client.get("/api/blast_radius", query_string={"aif_path": aif_path, "file": "a.py"})

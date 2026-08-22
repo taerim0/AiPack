@@ -2,7 +2,7 @@ import pytest
 
 from file.relationship import (
     build_tree, has_cycle, move_file, add_dependency, remove_dependency, build_stem_map, CycleError,
-    get_dependents, get_blast_radius,
+    get_dependents, get_blast_radius, has_relationship_cycle, add_relationship, remove_relationship,
 )
 
 
@@ -160,6 +160,81 @@ def test_remove_dependency_raises_on_unknown_file():
     files = {"a.py": {"dependencies": []}}
     with pytest.raises(ValueError):
         remove_dependency(files, "missing.py", "a.py")
+
+
+def test_has_relationship_cycle_detects_would_be_cycle():
+    # same scenario as test_has_cycle_detects_would_be_cycle(), but over an
+    # already-resolved relationships dict (no stem_map/raw import strings)
+    relationships = {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": ["a.py"], "external": []},  # b already depends on a
+    }
+    assert has_relationship_cycle(relationships, "b.py", "a.py") is True
+    assert has_relationship_cycle(relationships, "a.py", "b.py") is False
+
+
+def test_add_relationship_only_touches_the_one_file():
+    relationships = {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": ["c.py"], "external": []},
+        "c.py": {"internal": [], "external": []},
+    }
+    add_relationship(relationships, "a.py", "c.py")
+
+    assert relationships["a.py"]["internal"] == ["c.py"]
+    assert relationships["b.py"]["internal"] == ["c.py"]  # untouched
+
+
+def test_add_relationship_is_a_noop_when_the_edge_already_exists():
+    relationships = {
+        "a.py": {"internal": ["c.py"], "external": []},
+        "c.py": {"internal": [], "external": []},
+    }
+    add_relationship(relationships, "a.py", "c.py")
+
+    assert relationships["a.py"]["internal"] == ["c.py"]  # not duplicated
+
+
+def test_add_relationship_raises_on_cycle():
+    relationships = {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": ["a.py"], "external": []},  # b already depends on a
+    }
+    with pytest.raises(CycleError):
+        add_relationship(relationships, "a.py", "b.py")  # would close a -> b -> a
+
+
+def test_add_relationship_raises_on_unknown_or_self():
+    relationships = {"a.py": {"internal": [], "external": []}, "b.py": {"internal": [], "external": []}}
+
+    with pytest.raises(ValueError):
+        add_relationship(relationships, "a.py", "a.py")
+    with pytest.raises(ValueError):
+        add_relationship(relationships, "a.py", "missing.py")
+
+
+def test_remove_relationship_removes_only_that_edge():
+    relationships = {
+        "a.py": {"internal": ["b.py", "c.py"], "external": []},
+        "b.py": {"internal": [], "external": []},
+        "c.py": {"internal": [], "external": []},
+    }
+    remove_relationship(relationships, "a.py", "b.py")
+
+    assert relationships["a.py"]["internal"] == ["c.py"]
+
+
+def test_remove_relationship_is_a_noop_when_no_such_edge():
+    relationships = {"a.py": {"internal": [], "external": []}, "b.py": {"internal": [], "external": []}}
+    remove_relationship(relationships, "a.py", "b.py")
+
+    assert relationships["a.py"]["internal"] == []
+
+
+def test_remove_relationship_raises_on_unknown_file():
+    relationships = {"a.py": {"internal": [], "external": []}}
+    with pytest.raises(ValueError):
+        remove_relationship(relationships, "missing.py", "a.py")
 
 
 def test_get_dependents_finds_direct_dependents_only():

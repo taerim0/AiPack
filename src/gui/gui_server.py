@@ -270,6 +270,52 @@ def api_files():
     return jsonify(query_service.list_files(aif_path, project_path))
 
 
+@app.route("/api/relationships")
+def api_relationships():
+    aif_path = request.args["aif_path"]
+    return jsonify(query_service.get_relationships(aif_path))
+
+
+@app.route("/api/relationships/link", methods=["POST"])
+def api_relationships_link():
+    """Post-pack counterpart to /api/pack/link: edits an already-saved
+    project's relationships directly on disk (no job_id, no review screen)
+    -- see pack_service.link_saved_relationship() for why this can't just
+    reuse the pack/link path.
+    """
+    data = request.get_json(silent=True) or {}
+    aif_path = data.get("aif_path")
+    file_name = data.get("file")
+    target = data.get("target")
+    if not aif_path or not file_name or not target:
+        return jsonify({"error": "aif_path, file, target가 모두 필요합니다"}), 400
+    try:
+        relationships = pack_service.link_saved_relationship(aif_path, file_name, target)
+    except CycleError as e:
+        return jsonify({"error": str(e)}), 409
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    return jsonify({"relationships": relationships})
+
+
+@app.route("/api/relationships/unlink", methods=["POST"])
+def api_relationships_unlink():
+    """Post-pack counterpart to /api/pack/unlink. See
+    pack_service.unlink_saved_relationship().
+    """
+    data = request.get_json(silent=True) or {}
+    aif_path = data.get("aif_path")
+    file_name = data.get("file")
+    target = data.get("target")
+    if not aif_path or not file_name or not target:
+        return jsonify({"error": "aif_path, file, target가 모두 필요합니다"}), 400
+    try:
+        relationships = pack_service.unlink_saved_relationship(aif_path, file_name, target)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    return jsonify({"relationships": relationships})
+
+
 @app.route("/api/dependents")
 def api_dependents():
     aif_path = request.args["aif_path"]

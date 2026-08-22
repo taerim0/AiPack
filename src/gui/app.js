@@ -1052,6 +1052,88 @@ async function renderFiles() {
   } catch (e) { showError(e); }
 }
 
+// Post-pack counterpart to the pack review screen's tree section (see
+// showReviewState()): the exact same two components (renderDependencyTree
+// Overview, renderRelationshipEditor), just sourced from an already-saved
+// project's /api/relationships instead of a live job's review.tree, and
+// edited via /api/relationships/link|unlink (pack_service.
+// link_saved_relationship()/unlink_saved_relationship() -- no job_id, edits
+// aif.json on disk directly) instead of /api/pack/link|unlink. Lets a human
+// fix a relationship they notice is wrong after packing without re-running
+// the whole pipeline. Low-confidence files (same 0.34 threshold
+// confidenceLevel()/corrector.py's triage() use) are flagged in the tree
+// the same way a review's needs_review list flags them, since "worth a
+// second look" doesn't stop being true just because packing already
+// finished.
+async function renderRelationships() {
+  nav.classList.remove("hidden");
+  showLoading();
+  const aifPath = getAif();
+  try {
+    const [relationships, files] = await Promise.all([
+      api("/api/relationships", { aif_path: aifPath }),
+      api("/api/files", { aif_path: aifPath }),
+    ]);
+    delete files._stale;
+    const allFileNames = Object.keys(relationships).sort();
+    const flaggedFileNames = allFileNames.filter(
+      name => confidenceLevel(files[name]?.confidence ?? 1.0) === "low"
+    );
+
+    let currentTree = relationships;
+    const section = el("div", {});
+    const editError = el("div", { class: "error hidden" });
+
+    function showTreeOverview() {
+      section.innerHTML = "";
+      section.appendChild(renderDependencyTreeOverview(currentTree, allFileNames, flaggedFileNames, showEditView));
+    }
+
+    function showEditView(selectedFile) {
+      section.innerHTML = "";
+      let relEditor;
+      relEditor = renderRelationshipEditor(
+        currentTree,
+        allFileNames,
+        async (file, target) => {
+          editError.classList.add("hidden");
+          try {
+            const res = await apiPost("/api/relationships/link", { aif_path: aifPath, file, target });
+            currentTree = res.relationships;
+            relEditor.setTree(currentTree);
+          } catch (e) {
+            editError.textContent = e.message;
+            editError.classList.remove("hidden");
+          }
+        },
+        async (file, target) => {
+          editError.classList.add("hidden");
+          try {
+            const res = await apiPost("/api/relationships/unlink", { aif_path: aifPath, file, target });
+            currentTree = res.relationships;
+            relEditor.setTree(currentTree);
+          } catch (e) {
+            editError.textContent = e.message;
+            editError.classList.remove("hidden");
+          }
+        },
+        selectedFile
+      );
+      section.appendChild(el("button", { class: "secondary", text: "← 트리로 돌아가기", onclick: showTreeOverview }));
+      section.appendChild(relEditor.el);
+    }
+
+    showTreeOverview();
+
+    app.innerHTML = "";
+    app.appendChild(el("div", { class: "card" }, [
+      el("h1", { text: "파일 관계" }),
+      el("p", { class: "muted", text: "▶ 를 클릭해 하위 트리를 접거나 펼치세요. 수정하고 싶은 파일 이름을 클릭하면 편집 화면이 열립니다 -- 변경 사항은 즉시 aif.json에 저장됩니다." }),
+      section, editError,
+    ]));
+  } catch (e) { showError(e); }
+}
+
 async function renderFileDetail(name, params) {
   nav.classList.remove("hidden");
   showLoading();
@@ -1159,6 +1241,7 @@ function route() {
     return renderFileDetail(decodeURIComponent(segments.slice(1).join("/")), params);
   }
   if (segments[0] === "search") return renderSearch();
+  if (segments[0] === "relationships") return renderRelationships();
   return renderLanding();
 }
 

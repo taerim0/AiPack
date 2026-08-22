@@ -18,7 +18,10 @@ Read-only by design -- see `mcp_server.py`'s module docstring for why.
 import json
 from pathlib import Path
 
-from file.relationship import get_dependents as _get_dependents, get_blast_radius as _get_blast_radius
+from file.relationship import (
+    get_dependents as _get_dependents,
+    get_blast_radius as _get_blast_radius,
+)
 from search import search_files, read_detail_range
 from freshness import check_freshness as _check_freshness
 from config import collect_and_scan
@@ -123,6 +126,19 @@ def list_files(aif_path: str, project_path: str | None = None) -> dict:
     if warning:
         result["_stale"] = warning
     return result
+
+
+def get_relationships(aif_path: str) -> dict:
+    """The whole dependency graph at once -- every file mapped to what it
+    depends on internally (other project files) and externally (packages),
+    aif.json's `relationships` field verbatim. get_dependents()/
+    get_blast_radius() answer a question about one file; this is the same
+    underlying graph with nothing filtered out, for a caller that wants the
+    project's overall shape in one call (e.g. a whole-tree browser view)
+    instead of walking it file by file.
+    """
+    aif = _load_json(aif_path)
+    return aif.get("relationships", {})
 
 
 def get_dependents(aif_path: str, file: str) -> list[str]:

@@ -9,6 +9,8 @@ test_pack_integration.py.
 import json
 import time
 
+import pytest
+
 import checkpoint
 import llm
 import packager
@@ -503,3 +505,88 @@ def test_pack_job_on_empty_project_reports_error_state(tmp_path, monkeypatch):
     assert status["state"] == "error"
     assert status["result"] is None
     assert status["error"]
+
+
+def _write_saved_aif(path, relationships):
+    """A minimal already-finalized aif.json -- no `dependencies`/`compressed`
+    on any file, matching what a real pack() run leaves behind after
+    finalize_aif()/save_aif() split those out. link_saved_relationship()/
+    unlink_saved_relationship() operate on exactly this on-disk shape.
+    """
+    path.write_text(json.dumps({
+        "project": {"name": "sample", "prompt": "A sample project."},
+        "rules": [],
+        "tokens": {},
+        "files": {name: {"summary": "x", "confidence": 1.0} for name in relationships},
+        "relationships": relationships,
+    }), encoding="utf-8")
+
+
+def test_link_saved_relationship_edits_the_file_directly(tmp_path):
+    aif_path = tmp_path / "sample.json"
+    _write_saved_aif(aif_path, {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": [], "external": []},
+    })
+
+    relationships = pack_service.link_saved_relationship(str(aif_path), "a.py", "b.py")
+    assert relationships["a.py"]["internal"] == ["b.py"]
+
+    # persisted, not just returned
+    saved = json.loads(aif_path.read_text(encoding="utf-8"))
+    assert saved["relationships"]["a.py"]["internal"] == ["b.py"]
+    assert saved["project"]["name"] == "sample"  # everything else untouched
+
+
+def test_link_saved_relationship_does_not_touch_sibling_detail_or_cache_files(tmp_path):
+    # the exact bug this function's docstring warns against: reusing
+    # packager.save_aif() here would blank out detail.json/cache.json since
+    # neither `compressed` nor `_manifest` exist on an already-saved aif.
+    aif_path = tmp_path / "sample.json"
+    _write_saved_aif(aif_path, {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": [], "external": []},
+    })
+    detail_path = tmp_path / "sample.detail.json"
+    cache_path = tmp_path / "sample.cache.json"
+    detail_path.write_text(json.dumps({"a.py": {"compressed": "real body"}}), encoding="utf-8")
+    cache_path.write_text(json.dumps({"a.py": "somehash"}), encoding="utf-8")
+
+    pack_service.link_saved_relationship(str(aif_path), "a.py", "b.py")
+
+    assert json.loads(detail_path.read_text(encoding="utf-8")) == {"a.py": {"compressed": "real body"}}
+    assert json.loads(cache_path.read_text(encoding="utf-8")) == {"a.py": "somehash"}
+
+
+def test_link_saved_relationship_rejects_a_cycle(tmp_path):
+    aif_path = tmp_path / "sample.json"
+    _write_saved_aif(aif_path, {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": ["a.py"], "external": []},  # b already depends on a
+    })
+
+    with pytest.raises(CycleError):
+        pack_service.link_saved_relationship(str(aif_path), "a.py", "b.py")  # would close a -> b -> a
+
+
+def test_link_saved_relationship_raises_on_unknown_file(tmp_path):
+    aif_path = tmp_path / "sample.json"
+    _write_saved_aif(aif_path, {"a.py": {"internal": [], "external": []}})
+
+    with pytest.raises(ValueError):
+        pack_service.link_saved_relationship(str(aif_path), "a.py", "missing.py")
+
+
+def test_unlink_saved_relationship_removes_only_that_edge(tmp_path):
+    aif_path = tmp_path / "sample.json"
+    _write_saved_aif(aif_path, {
+        "a.py": {"internal": ["b.py", "c.py"], "external": []},
+        "b.py": {"internal": [], "external": []},
+        "c.py": {"internal": [], "external": []},
+    })
+
+    relationships = pack_service.unlink_saved_relationship(str(aif_path), "a.py", "b.py")
+    assert relationships["a.py"]["internal"] == ["c.py"]
+
+    saved = json.loads(aif_path.read_text(encoding="utf-8"))
+    assert saved["relationships"]["a.py"]["internal"] == ["c.py"]
