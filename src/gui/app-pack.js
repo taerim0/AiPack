@@ -240,7 +240,7 @@ async function renderPackJob(jobId) {
       submitButton.disabled = true;
       window.removeEventListener("beforeunload", beforeUnload);
       try { await apiPost("/api/pack/cancel", { job_id: jobId }); } catch (e) { /* best-effort */ }
-      location.hash = "#/";
+      location.hash = "#/pack"; // back to the pack-new-project screen, not the bare-logo home
     });
 
     body.appendChild(el("div", {}, [

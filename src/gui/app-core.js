@@ -206,13 +206,14 @@ function setActiveNav(routeName) {
   }
 }
 
-// Same idea as setActiveNav() above, one level up: the topbar's two links
-// are global destinations (start/resume a pack, open options) rather than
-// project sections, so they're highlighted independently of the sidebar --
-// neither is active while browsing an already-loaded project (Overview/
-// Files/...), since that's the sidebar's own territory, not this bar's.
-// name=null (browsing pages, or any route this bar doesn't own) clears
-// both rather than leaving a stale one lit.
+// Same idea as setActiveNav() above, one level up: the topbar's four links
+// (the brand/logo included -- it's a real link now, to "/") are global
+// destinations (home, start/resume a pack, open an existing one, options)
+// rather than project sections, so they're highlighted independently of
+// the sidebar -- none of them is active while browsing an already-loaded
+// project (Overview/Files/...), since that's the sidebar's own territory,
+// not this bar's. name=null (browsing pages, or any route this bar
+// doesn't own) clears all four rather than leaving a stale one lit.
 function setActiveTopbar(name) {
   for (const a of topbar.querySelectorAll("a[data-topbar]")) {
     a.classList.toggle("active", a.dataset.topbar === name);
