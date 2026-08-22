@@ -68,6 +68,7 @@ GUI session.
 
 import contextlib
 import json
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -99,18 +100,57 @@ _jobs_lock = threading.Lock()  # guards _jobs itself (insert/lookup) only -- see
 # *job* mutation already had this guard via job["lock"], but this on-disk
 # path (which isn't a job at all) didn't.
 _file_locks: dict[str, threading.Lock] = {}
-_file_locks_meta_lock = threading.Lock()  # guards creating a per-path lock, not the write itself
+_file_locks_meta_lock = threading.Lock()  # guards creating/evicting a per-path lock, not the write itself
+
+# Bounds _file_locks the same way _MAX_FINISHED_JOBS bounds _jobs (a
+# long-running GUI session touching many different aif.json paths shouldn't
+# grow this forever) -- see _evict_old_file_locks() for why eviction has to
+# skip a lock currently held, unlike job eviction.
+_MAX_FILE_LOCKS = 200
+
+
+def _evict_old_file_locks(keep: str):
+    """Must be called with _file_locks_meta_lock already held. Only evicts
+    *unlocked* entries other than `keep` (the path _lock_for_path() was just
+    asked for): removing a Lock object a thread still holds wouldn't break
+    that thread's own critical section, but a subsequent request for the
+    same path would then create a brand new Lock and run concurrently with
+    it -- silently defeating the whole point of this locking; excluding
+    `keep` closes the same hole for the path being looked up *right now*,
+    which would otherwise risk two callers getting two different Lock
+    objects for it if eviction happened to remove it between them. Oldest
+    first (dict insertion order); a net-negative round (everything else is
+    currently held) just leaves the dict over size until the next call,
+    rather than evicting something unsafe to evict.
+    """
+    if len(_file_locks) <= _MAX_FILE_LOCKS:
+        return
+    for key in list(_file_locks):
+        if len(_file_locks) <= _MAX_FILE_LOCKS:
+            break
+        if key != keep and not _file_locks[key].locked():
+            del _file_locks[key]
 
 
 def _lock_for_path(path: str) -> threading.Lock:
     """Resolved to an absolute path first so 'aif.json' and './aif.json'
     from two different requests -- or a relative job output_path vs. an
     absolute one a GUI page happens to pass -- don't get two different
-    locks for what's actually the same file.
+    locks for what's actually the same file. os.path.normcase() on top of
+    that (a no-op on POSIX, lowercases on Windows) matters specifically for
+    a path that doesn't exist on disk *yet*: Path.resolve() only normalizes
+    an existing path's real on-disk case, so "Out.json" and "out.json"
+    resolve to two *different* strings before the file is first created and
+    only converge to the same one afterward -- verified directly. Without
+    normcase(), the very first concurrent write to a brand-new file (the
+    exact scenario this locking exists for) could still get two different
+    Lock objects for what's actually the same eventual file.
     """
-    key = str(Path(path).resolve())
+    key = os.path.normcase(str(Path(path).resolve()))
     with _file_locks_meta_lock:
-        return _file_locks.setdefault(key, threading.Lock())
+        lock = _file_locks.setdefault(key, threading.Lock())
+        _evict_old_file_locks(keep=key)
+        return lock
 
 # Bounds memory in a long-running GUI session -- a single-user local tool
 # has no other trigger (no request ever asks to delete a finished job) to
@@ -256,11 +296,12 @@ def _build_review(aif: dict) -> dict:
     }
 
 
-def _run(job: dict, project_path: str, no_cache: bool, selected_files: list[str]) -> None:
+def _run(job: dict, project_path: str, no_cache: bool, no_llm: bool, selected_files: list[str]) -> None:
     try:
         with _capture_for_job(job):
             aif = packager.pack(
-                project_path, interactive=False, use_cache=not no_cache, preselected=selected_files
+                project_path, interactive=False, use_cache=not no_cache, use_llm=not no_llm,
+                preselected=selected_files
             )
             if not aif:
                 # pack() returns {} when nothing was selected, or when a
@@ -282,7 +323,8 @@ def _run(job: dict, project_path: str, no_cache: bool, selected_files: list[str]
 
 
 def start_pack_job(
-    project_path: str, output_path: str | None = None, no_cache: bool = False, selected_files: list[str] | None = None
+    project_path: str, output_path: str | None = None, no_cache: bool = False, no_llm: bool = False,
+    selected_files: list[str] | None = None
 ) -> str:
     """Kicks off one pack() run in a background thread and returns its job id
     immediately. selected_files (relative names, from list_selectable_files()'s
@@ -293,6 +335,13 @@ def start_pack_job(
     auto/interactive fallback for a bare `preselected=None`; gui_server.py's
     route already 400s before ever calling this with no selection, so this
     only matters for a future caller that skips that guard.
+
+    no_llm mirrors `pack --no-llm` (CLI): no GEMINI_API_KEY/network call at
+    all, `rules` stays `[]`, `prompt` becomes packager.STRUCTURAL_ONLY_NOTE,
+    and each file's summary comes from summarizer.generate_structural_
+    summaries() instead of an LLM. The review screen (get_review()) needs no
+    changes for this -- confidence.triage() and the summary-edit fields
+    already just render whatever `pack()` produced, structural or not.
 
     The job pauses in state "reviewing" once analysis finishes; see
     get_review()/submit_review().
@@ -312,7 +361,7 @@ def start_pack_job(
         _jobs[job_id] = job
         _evict_old_finished_jobs()
     thread = threading.Thread(
-        target=_run, args=(job, project_path, no_cache, selected_files or []), daemon=True
+        target=_run, args=(job, project_path, no_cache, no_llm, selected_files or []), daemon=True
     )
     thread.start()
     return job_id
@@ -567,16 +616,17 @@ def submit_review(
         # of them can touch this job's `aif` while it's being committed here.
         job["state"] = "finalizing"
 
-    # Computed before the save, not after: save_aif() derives this same
-    # path internally when output_path is None (RESULT_DIR/<project name>
-    # .json), and the lock below has to key on the exact file this write
-    # actually lands on -- a link_saved_relationship()/
-    # unlink_saved_relationship() call aimed at the same path (someone
-    # browsing this project's *previous* pack via the Relationships page
-    # while this job finishes) has to contend for the same lock, not a
-    # different one derived from a stale name.
+    # Computed before the save, not after, via the same
+    # packager.resolve_output_path() save_aif() itself uses internally --
+    # not a separate copy of that fallback, so the two can't silently drift
+    # apart. The lock below has to key on the exact file this write actually
+    # lands on: a link_saved_relationship()/unlink_saved_relationship() call
+    # aimed at the same path (someone browsing this project's *previous*
+    # pack via the Relationships page while this job finishes) has to
+    # contend for the same lock, not a different one derived from a stale
+    # name.
     output_path = job["output_path"]
-    result_path = Path(output_path) if output_path else packager.RESULT_DIR / f"{aif['project']['name']}.json"
+    result_path = packager.resolve_output_path(aif, output_path)
 
     try:
         with _lock_for_path(str(result_path)), _capture_for_job(job):

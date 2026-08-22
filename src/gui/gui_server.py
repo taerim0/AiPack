@@ -139,6 +139,9 @@ def api_pack_start():
     plain (non---auto-correct) `pack`; see /api/pack/review and
     /api/pack/finalize below, and pack_service.py's module docstring for the
     full interactive-parity picture.
+
+    Optional `no_llm` mirrors CLI `pack --no-llm` -- see
+    pack_service.start_pack_job()'s docstring.
     """
     data = request.get_json(silent=True) or {}
     project_path = (data.get("project_path") or "").strip()
@@ -154,7 +157,10 @@ def api_pack_start():
 
     output_path = (data.get("output_path") or "").strip() or None
     no_cache = bool(data.get("no_cache"))
-    job_id = pack_service.start_pack_job(project_path, output_path, no_cache, selected_files)
+    no_llm = bool(data.get("no_llm"))
+    job_id = pack_service.start_pack_job(
+        project_path, output_path, no_cache=no_cache, no_llm=no_llm, selected_files=selected_files
+    )
     return jsonify({"job_id": job_id})
 
 

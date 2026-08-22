@@ -13,6 +13,7 @@ point -- by an earlier test file.
 
 import builtins
 import json
+from pathlib import Path
 
 import checkpoint
 import llm
@@ -309,6 +310,18 @@ def test_pack_include_ignore_params_extend_ziplex_json_not_replace_it(tmp_path, 
     aif = packager.pack(str(project), auto=True, interactive=False, ignore=["*.generated.py"])
 
     assert set(aif["files"].keys()) == {"src/main.py"}
+
+
+def test_resolve_output_path_matches_save_aifs_own_default(tmp_path, monkeypatch):
+    # gui/pack_service.py's submit_review() calls this to lock the same
+    # path save_aif() is about to write to -- found by code review that a
+    # separate copy of this fallback could silently drift from save_aif()'s
+    # own; this locks the two together by construction instead.
+    monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
+    aif = {"project": {"name": "my-project"}}
+
+    assert packager.resolve_output_path(aif, None) == tmp_path / "result" / "my-project.json"
+    assert packager.resolve_output_path(aif, "custom/out.json") == Path("custom/out.json")
 
 
 def test_save_aif_writes_a_sibling_cache_json_from_the_manifest(tmp_path, monkeypatch):

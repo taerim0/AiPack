@@ -68,6 +68,32 @@ def test_start_pack_job_pauses_in_reviewing_state(tmp_path, monkeypatch):
     assert not output_path.exists()  # nothing saved until submit_review()
 
 
+def test_start_pack_job_no_llm_never_calls_the_llm_and_uses_structural_summaries(tmp_path, monkeypatch):
+    # A provider that raises on any call at all -- stricter than checking
+    # the result afterward, since a call this test doesn't expect fails
+    # immediately at the point it happens (same pattern as
+    # test_pack_integration.py's use_llm=False coverage).
+    class _RaisingProvider(llm.MockProvider):
+        def generate(self, prompt: str, retry: int = 5) -> str:
+            raise AssertionError("no_llm=True must never call the LLM provider")
+
+    monkeypatch.setattr(llm, "_provider", _RaisingProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    job_id = pack_service.start_pack_job(str(project), no_llm=True, selected_files=["main.py"])
+    status = _wait(job_id)
+
+    assert status["state"] == "reviewing"
+    review = pack_service.get_review(job_id)
+    assert review["project"]["prompt"] == packager.STRUCTURAL_ONLY_NOTE
+    assert review["rules"] == []
+    auto_kept = {e["file"]: e["summary"] for e in review["auto_kept"]}
+    assert auto_kept["main.py"] == "Defines: add(a, b)"
+
+
 def test_start_pack_job_only_includes_selected_files(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
@@ -606,6 +632,54 @@ def test_lock_for_path_returns_different_locks_for_different_paths(tmp_path):
     a = pack_service._lock_for_path(str(tmp_path / "a.json"))
     b = pack_service._lock_for_path(str(tmp_path / "b.json"))
     assert a is not b
+
+
+def test_lock_for_path_normalizes_case_for_a_not_yet_existing_file(tmp_path):
+    # Found by code review: Path.resolve() only normalizes an existing
+    # path's real on-disk case on Windows -- "Out.json" and "out.json"
+    # resolve to *different* strings before the file is ever created (only
+    # converging afterward), which would silently give two different Lock
+    # objects for what's actually the same eventual file, right at the
+    # exact moment (a brand-new file) this locking matters most.
+    aif_path = tmp_path / "Out.json"
+    assert not aif_path.exists()
+
+    upper = pack_service._lock_for_path(str(aif_path))
+    lower = pack_service._lock_for_path(str(tmp_path / "out.json"))
+    assert upper is lower
+
+
+def test_lock_for_path_evicts_old_unlocked_entries_past_the_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(pack_service, "_file_locks", {})
+    monkeypatch.setattr(pack_service, "_MAX_FILE_LOCKS", 3)
+
+    first = pack_service._lock_for_path(str(tmp_path / "a.json"))
+    pack_service._lock_for_path(str(tmp_path / "b.json"))
+    pack_service._lock_for_path(str(tmp_path / "c.json"))
+    assert len(pack_service._file_locks) == 3
+
+    # past the cap -- "a" is the oldest and unlocked, so it's the one evicted
+    pack_service._lock_for_path(str(tmp_path / "d.json"))
+    assert len(pack_service._file_locks) == 3
+    assert pack_service._lock_for_path(str(tmp_path / "a.json")) is not first
+
+
+def test_lock_for_path_never_evicts_a_currently_held_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(pack_service, "_file_locks", {})
+    monkeypatch.setattr(pack_service, "_MAX_FILE_LOCKS", 1)
+
+    held = pack_service._lock_for_path(str(tmp_path / "held.json"))
+    held.acquire()
+    try:
+        # every request past the cap tries to evict "held.json" first (it's
+        # the oldest) -- since it's locked, eviction must skip it instead of
+        # silently handing a second caller a different Lock for the same path
+        again = pack_service._lock_for_path(str(tmp_path / "held.json"))
+        assert again is held
+        pack_service._lock_for_path(str(tmp_path / "other.json"))
+        assert pack_service._lock_for_path(str(tmp_path / "held.json")) is held
+    finally:
+        held.release()
 
 
 def test_link_saved_relationship_is_safe_under_concurrent_writes(tmp_path):
