@@ -53,6 +53,14 @@ function renderPackHome() {
     loadFilesButton.disabled = true;
     try {
       const data = await api("/api/select_files", { project_path });
+      // settings.py's resolved default for *this* project (its own pin, or
+      // the Options page's global default) -- shown as a placeholder, not
+      // filled into the field's actual value, so leaving the field alone
+      // still submits blank and re-resolves dynamically at pack time
+      // (pack_service.start_pack_job()) rather than being treated as an
+      // explicit path that would pin the project to whatever the default
+      // just happened to be right now.
+      if (data.default_output_path) packOutInput.placeholder = data.default_output_path;
       selectableCheckboxes = [];
       dangerousCheckboxes = [];
       fileListBox.innerHTML = "";
@@ -221,10 +229,32 @@ function renderCheck() {
   const recent = getRecent();
   if (recent.length) {
     const recentList = el("div", { class: "recent-list" }, recent.map(r => {
+      // Only checkable when a project folder path was recorded alongside
+      // this aif -- openProject()'s second arg is optional, so an entry
+      // opened by aif.json path alone has nothing on disk to diff against.
+      // /api/freshness (query_service.py's check_freshness()) is a hash
+      // comparison, no LLM calls -- cheap enough to fire once per row on
+      // every visit to this page without asking first, unlike a full
+      // re-pack. Best-effort: a moved/deleted project folder or a missing
+      // cache.json just leaves the badge blank instead of breaking the row.
+      const badge = el("span", { class: "recent-freshness muted" });
+      if (r.project) {
+        api("/api/freshness", { project_path: r.project, aif_path: r.aif })
+          .then(report => {
+            const changedCount = (report.changed?.length || 0) + (report.added?.length || 0) + (report.removed?.length || 0);
+            badge.textContent = report.is_stale ? `⚠️ ${changedCount}개 변경` : "✅ 최신";
+            badge.classList.toggle("stale", !!report.is_stale);
+          })
+          .catch(() => {}); // typo'd/moved path, missing cache.json, ... -- leave the badge blank
+      }
+
       const row = el("div", { class: "recent-row" }, [
         el("div", { class: "recent-main", onclick: () => openProject(r.aif, r.project) }, [
           el("div", { class: "recent-aif", text: r.aif }),
-          el("div", { class: "recent-meta", text: `${r.project ? r.project + " · " : ""}${relativeTime(r.openedAt)}` }),
+          el("div", { class: "recent-meta" }, [
+            el("span", { text: `${r.project ? r.project + " · " : ""}${relativeTime(r.openedAt)}` }),
+            badge,
+          ]),
         ]),
         el("button", { class: "secondary recent-remove", text: "✕", onclick: (e) => {
           e.stopPropagation();
@@ -247,22 +277,54 @@ function renderCheck() {
   }
 }
 
-// Placeholder for now -- reachable from the topbar (see index.html/
-// app-router.js) whether or not a project is loaded, same as
-// renderPackHome()/renderCheck() above. No settings actually live here
-// yet; this just claims the route/nav slot so the topbar has somewhere
-// real to point, ahead of whatever options (output folder location,
-// per-project freshness checks, a translation toggle -- see the roadmap
-// items this GUI reorg is being driven by) end up living here later.
+// Reachable from the topbar (see index.html/app-router.js) whether or not
+// a project is loaded, same as renderPackHome()/renderCheck() above. Only
+// one real setting so far -- the default output folder new packs save to
+// (settings.py's `output_dir`, GET/POST /api/settings) -- ahead of
+// whatever else (per-project freshness checks, a translation toggle -- see
+// the roadmap items this GUI reorg is being driven by) end up living here
+// later. Per-project folder pins aren't edited here at all: typing an
+// explicit path in renderPackHome()'s own "출력 경로" field is what sets
+// one (see pack_service.start_pack_job()) -- this page only ever touches
+// the global fallback every *unpinned* project follows.
 function renderOptions() {
   nav.classList.add("hidden");
   app.innerHTML = "";
+
+  const outputDirInput = el("input", { type: "text", placeholder: "비우면 result/<프로젝트명>.json (Ziplex 설치 폴더 내부)" });
+  const saveButton = el("button", { text: "저장" });
+  const savedNote = el("span", { class: "muted hidden", text: "저장됨" });
+  const errorBox = el("div", { class: "error hidden" });
+
+  saveButton.addEventListener("click", async () => {
+    savedNote.classList.add("hidden");
+    errorBox.classList.add("hidden");
+    saveButton.disabled = true;
+    try {
+      await apiPost("/api/settings", { output_dir: outputDirInput.value.trim() });
+      savedNote.classList.remove("hidden");
+    } catch (e) {
+      errorBox.textContent = e.message;
+      errorBox.classList.remove("hidden");
+    } finally {
+      saveButton.disabled = false;
+    }
+  });
+
   app.appendChild(el("div", { class: "landing" }, [
     el("div", { class: "card landing-intro" }, [
       el("h1", { text: "⚙️ 옵션" }),
-      el("p", { text: "아직 구현된 옵션이 없습니다. 추후 이곳에 추가될 예정입니다." }),
+    ]),
+    el("div", { class: "card" }, [
+      el("h2", { text: "기본 저장 폴더" }),
+      el("p", { class: "muted", text: "새로 패킹하는 프로젝트가 기본으로 저장될 폴더입니다. 패킹 화면의 \"출력 경로\"에 직접 경로를 입력한 프로젝트는 이 설정 대신 그 경로를 계속 기억해 사용합니다." }),
+      el("div", { class: "input-row" }, [outputDirInput, browseButton(outputDirInput)]),
+      el("div", { class: "copy-row" }, [saveButton, savedNote]),
+      errorBox,
     ]),
   ]));
+
+  api("/api/settings").then(data => { outputDirInput.value = data.output_dir || ""; }).catch(() => {});
 }
 
 async function renderOverview() {

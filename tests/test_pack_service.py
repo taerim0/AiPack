@@ -15,6 +15,7 @@ import pytest
 import checkpoint
 import llm
 import packager
+import settings as app_settings
 from gui import pack_service
 from file.relationship import CycleError
 
@@ -52,6 +53,80 @@ def test_list_selectable_files_splits_safe_and_dangerous(tmp_path):
     dangerous_names = [d["file"] for d in result["dangerous"]]
     assert dangerous_names == ["secret.env"]
     assert result["dangerous"][0]["matched_text"] == 'API_KEY = "abc123"'
+
+
+def test_list_selectable_files_default_output_path_empty_when_unconfigured(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    result = pack_service.list_selectable_files(str(project))
+
+    assert result["default_output_path"] == ""
+
+
+def test_list_selectable_files_default_output_path_follows_global_setting(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    app_settings.save_settings({"output_dir": str(tmp_path / "out"), "project_output_dirs": {}})
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    result = pack_service.list_selectable_files(str(project))
+
+    assert result["default_output_path"] == str(tmp_path / "out" / "project.json")
+
+
+def test_start_pack_job_resolves_blank_output_path_from_settings_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(app_settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    app_settings.save_settings({"output_dir": str(tmp_path / "out"), "project_output_dirs": {}})
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    # output_path left None (the pack form's field left blank) -- resolved
+    # via settings.py before the job dict is even built, so this is visible
+    # immediately, no need to wait for the background thread.
+    job_id = pack_service.start_pack_job(str(project), selected_files=["main.py"])
+
+    job = pack_service._lookup_job(job_id)
+    assert job["output_path"] == str(tmp_path / "out" / "project.json")
+    _wait(job_id)  # let the thread finish so it doesn't outlive the test
+
+
+def test_start_pack_job_pins_project_when_explicit_output_path_given(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(app_settings, "SETTINGS_PATH", tmp_path / "settings.json")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    output_path = tmp_path / "custom" / "project.json"
+
+    job_id = pack_service.start_pack_job(str(project), str(output_path), selected_files=["main.py"])
+    _wait(job_id)
+
+    pinned = app_settings.load_settings()["project_output_dirs"]
+    assert pinned[str(project.resolve())] == str(output_path.parent)
+
+
+def test_start_pack_job_does_not_pin_when_output_path_left_blank(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(app_settings, "SETTINGS_PATH", tmp_path / "settings.json")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    job_id = pack_service.start_pack_job(str(project), selected_files=["main.py"])
+    _wait(job_id)
+
+    # leaving the field blank must never create a pin -- otherwise a
+    # project would silently freeze onto RESULT_DIR (or whatever the
+    # global default happened to be) the very first time it's packed,
+    # instead of continuing to track later changes to that default
+    assert app_settings.load_settings()["project_output_dirs"] == {}
 
 
 def test_start_pack_job_pauses_in_reviewing_state(tmp_path, monkeypatch):

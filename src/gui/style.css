@@ -172,7 +172,8 @@ h2 { font-size: 1.1em; color: var(--muted); margin-top: 0; }
   overflow-wrap: anywhere;
 }
 .recent-main:hover .recent-aif { color: var(--accent); }
-.recent-meta { color: var(--muted); font-size: 0.8em; margin-top: 2px; }
+.recent-meta { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.8em; margin-top: 2px; }
+.recent-freshness.stale { color: var(--danger); }
 .recent-remove { padding: 4px 8px; flex-shrink: 0; }
 
 .pack-status {

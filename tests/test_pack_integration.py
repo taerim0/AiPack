@@ -493,6 +493,36 @@ def test_pack_reuses_summaries_for_unchanged_files_on_a_second_run(tmp_path, mon
     assert aif2["files"]["README.md"]["summary"] == aif1["files"]["README.md"]["summary"]
 
 
+def test_pack_result_dir_overrides_result_dir_for_cache_lookup(tmp_path, monkeypatch):
+    # RESULT_DIR itself points somewhere this test never writes to --
+    # proves the cache lookup follows the explicit `result_dir` param
+    # (settings.py's per-project/global folder, in the real GUI caller),
+    # not packager.py's own module-level default, the same way
+    # gui/pack_service.py's start_pack_job() relies on for a project with a
+    # configured output folder.
+    provider = _CountingMockProvider()
+    monkeypatch.setattr(llm, "_provider", provider)
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "unused-default")
+    custom_dir = tmp_path / "custom-output"
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    aif1 = packager.pack(str(project), auto=True, interactive=False, result_dir=custom_dir)
+    packager.save_aif(aif1, output_path=str(custom_dir / "project.json"))
+    assert not (tmp_path / "unused-default").exists()  # never touched
+
+    provider.calls = 0
+    aif2 = packager.pack(str(project), auto=True, interactive=False, result_dir=custom_dir)
+
+    # rules + prompt regenerate (2 calls); main.py's summary is reused from
+    # custom_dir, not re-summarized -- would be 3 calls if the cache lookup
+    # had silently fallen back to RESULT_DIR and found nothing there
+    assert provider.calls == 2
+    assert aif2["files"]["main.py"]["summary"] == aif1["files"]["main.py"]["summary"]
+
+
 def test_pack_only_resummarizes_a_changed_file(tmp_path, monkeypatch):
     provider = _CountingMockProvider()
     monkeypatch.setattr(llm, "_provider", provider)

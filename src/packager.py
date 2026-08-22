@@ -93,6 +93,7 @@ def pack(
     include: list[str] | None = None,
     ignore: list[str] | None = None,
     check_cancelled: Callable[[], str | None] | None = None,
+    result_dir: str | Path | None = None,
 ) -> dict:
     """include/ignore are extra glob patterns (gitignore syntax -- see
     collect_files()'s own docstring for exactly how each is applied),
@@ -127,7 +128,9 @@ def pack(
 
     use_cache controls incremental reuse (staleness stage 2): when a
     previous successful pack is found at the conventional RESULT_DIR path
-    for this project, any file whose content hash still matches gets its
+    for this project (or result_dir, if given -- see this function's own
+    note on that param, further down), any file whose content hash still
+    matches gets its
     summary reused instead of spending another LLM call on it. Only summary
     is reused -- signatures/dependencies/api/compressed are always
     freshly extracted, so a human's prior manual reparenting
@@ -175,8 +178,22 @@ def pack(
     the GUI's own non-interactive `pack()` calls. Not instant either way --
     a network-bound LLM call already in flight when a stop is requested
     still completes before the next checkpoint is reached.
+
+    result_dir overrides RESULT_DIR as where use_cache's incremental-reuse
+    lookup (load_previous_summaries(), just below) looks for a previous
+    successful pack -- not where *this* run's own aif.json ends up (that's
+    always whatever save_aif() is called with separately, after pack()
+    returns). Only meaningful together with a caller that also saves to a
+    non-default folder: gui/pack_service.py's start_pack_job() resolves a
+    project's effective output folder (settings.py's per-project pin, else
+    its global default, else nothing configured) once, up front, and passes
+    the exact same folder both here and to save_aif() later, so cache
+    lookup and the actual save destination never drift apart. None (the
+    CLI's only call shape) keeps today's behavior exactly: RESULT_DIR,
+    unconditionally.
     """
     root = Path(root_path)
+    effective_result_dir = Path(result_dir) if result_dir else RESULT_DIR
 
     # auto-detect a checkpoint
     checkpoint = ckpt.load_checkpoint(root_path)
@@ -251,7 +268,7 @@ def pack(
 
     # incremental reuse (staleness stage 2): {relative key: summary} for
     # files whose content hasn't changed since the last successful pack
-    previous_summaries = load_previous_summaries(root_path, selected, RESULT_DIR) if use_cache else {}
+    previous_summaries = load_previous_summaries(root_path, selected, effective_result_dir) if use_cache else {}
     if previous_summaries:
         print(f"  ♻️  이전 pack에서 변경 없는 파일 {len(previous_summaries)}개 발견 — 요약 재사용")
 

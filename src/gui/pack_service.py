@@ -74,6 +74,7 @@ import uuid
 from pathlib import Path
 
 import packager
+import settings as app_settings
 from config import collect_and_scan
 from confidence import triage
 from edits import finalize_aif, set_file_summary, set_project_name, set_project_prompt, set_rules
@@ -265,6 +266,13 @@ def list_selectable_files(project_path: str) -> dict:
     return {
         "safe": sorted(_rel_key(f, project_path) for f in scan_result["safe"]),
         "dangerous": dangerous,
+        # What start_pack_job() below will actually use if the output-path
+        # field is left blank -- "" when nothing's configured at either
+        # settings.py layer, in which case packager.py's own RESULT_DIR
+        # default applies (same as before settings.py existed). Surfaced
+        # here so the pack form can show it instead of a human having to
+        # guess where an unconfigured project's result will land.
+        "default_output_path": app_settings.resolve_output_path(project_path, Path(project_path).name),
     }
 
 
@@ -353,12 +361,16 @@ def request_cancel(job_id: str, save: bool) -> bool:
     return True
 
 
-def _run(job: dict, project_path: str, no_cache: bool, no_llm: bool, selected_files: list[str]) -> None:
+def _run(
+    job: dict, project_path: str, no_cache: bool, no_llm: bool, selected_files: list[str],
+    result_dir: Path | None = None,
+) -> None:
     try:
         with _capture_for_job(job):
             aif = packager.pack(
                 project_path, interactive=False, use_cache=not no_cache, use_llm=not no_llm,
                 preselected=selected_files, check_cancelled=_check_cancelled_for(job),
+                result_dir=result_dir,
             )
             if not aif:
                 with job["lock"]:
@@ -408,9 +420,28 @@ def start_pack_job(
     changes for this -- confidence.triage() and the summary-edit fields
     already just render whatever `pack()` produced, structural or not.
 
+    output_path resolution (settings.py): a caller-given output_path (the
+    pack form's "출력 경로" field, non-blank) is used as-is for this run and
+    also pins this project to its parent folder going forward
+    (set_project_output_dir()) -- an explicit choice, remembered. Left blank,
+    it resolves through settings.py instead (this project's own pin, else
+    the global default) into a concrete path if either is configured, or
+    stays None (packager.py's own RESULT_DIR-based default applies,
+    unchanged from before settings.py existed) if neither is. Either way,
+    the same folder that's resolved here is what packager.pack()'s
+    `result_dir` is given too, so its incremental-reuse cache lookup during
+    this run and the actual save destination afterward (submit_review(),
+    via resolve_output_path()/save_aif()) never drift apart.
+
     The job pauses in state "reviewing" once analysis finishes; see
     get_review()/submit_review().
     """
+    if output_path:
+        app_settings.set_project_output_dir(project_path, str(Path(output_path).parent))
+    else:
+        output_path = app_settings.resolve_output_path(project_path, Path(project_path).name) or None
+    result_dir = Path(output_path).parent if output_path else None
+
     job_id = uuid.uuid4().hex
     job = {
         "state": "running",
@@ -428,7 +459,7 @@ def start_pack_job(
         _jobs[job_id] = job
         _evict_old_finished_jobs()
     thread = threading.Thread(
-        target=_run, args=(job, project_path, no_cache, no_llm, selected_files or []), daemon=True
+        target=_run, args=(job, project_path, no_cache, no_llm, selected_files or [], result_dir), daemon=True
     )
     thread.start()
     return job_id
