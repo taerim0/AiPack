@@ -138,6 +138,49 @@ h2 { font-size: 1.1em; color: var(--muted); margin-top: 0; }
 }
 .file-edit-name { font-family: var(--mono); font-size: 0.9em; }
 
+.tree-overview {
+  margin: 6px 0 14px;
+  padding: 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+/* Replace the native <details> marker entirely instead of trying to
+   reposition it -- the built-in triangle is a list-item marker box, and
+   with a flex row (icon + name) as summary's content, browsers commonly
+   place it flush with the block's top-left corner instead of centered
+   beside the (possibly taller, wrapped) row -- reported directly against
+   this exact layout. A custom ::before triangle inside a flex summary
+   guarantees it always sits inline, immediately left of the row, on the
+   same line and vertically centered with the filename, regardless of
+   browser marker-positioning quirks. */
+.tree-node > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  list-style: none;
+}
+.tree-node > summary::-webkit-details-marker { display: none; }
+.tree-node > summary::before {
+  content: "▶";
+  flex-shrink: 0;
+  font-size: 0.7em;
+  color: var(--muted);
+  transition: transform 0.1s ease;
+}
+.tree-node[open] > summary::before { transform: rotate(90deg); }
+.tree-children { padding-left: 18px; margin-left: 6px; border-left: 1px dashed var(--border); }
+.tree-row { display: flex; align-items: baseline; gap: 2px; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+.tree-row:hover { background: rgba(255, 255, 255, 0.04); }
+.tree-name { overflow-wrap: anywhere; }
+.tree-row.tree-flagged .tree-name { color: var(--danger); }
+.tree-row.muted { cursor: default; }
+.tree-row.muted:hover { background: none; }
+
 .rel-master-detail {
   display: flex;
   gap: 14px;

@@ -169,6 +169,77 @@ def remove_dependency(files: dict, file_name: str, target: str) -> dict:
     return files
 
 
+def has_relationship_cycle(relationships: dict, from_file: str, to_file: str) -> bool:
+    """has_cycle()'s counterpart over an already-*resolved* `relationships`
+    dict (build_tree()'s output, or aif.json's own `relationships` field)
+    instead of a `files` dict with raw `dependencies` strings -- no
+    stem_map/resolve_dependency step needed, since there's no raw import
+    text left to resolve once `dependencies` has already been reduced to
+    this shape. Same walk-from-from_file direction and same reasoning as
+    has_cycle() -- see that function's docstring.
+    """
+    visited = set()
+    queue = [from_file]
+    while queue:
+        current = queue.pop()
+        if current == to_file:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        queue.extend(relationships.get(current, {}).get("internal", []))
+    return False
+
+
+def add_relationship(relationships: dict, file_name: str, target: str) -> dict:
+    """add_dependency()'s counterpart for editing an already-*finalized*
+    `relationships` dict directly -- e.g. the GUI's post-pack relationship
+    editor (gui/pack_service.link_saved_relationship()), for a project
+    that's already been packed and saved. finalize_aif() prunes each file's
+    working-state `dependencies` list once `relationships` is built (see its
+    own docstring), so add_dependency() has nothing left to edit on an
+    already-saved aif.json -- this operates on `relationships` itself
+    instead, which is exactly what's still there.
+
+    Same contract as add_dependency(): a no-op if the edge already exists,
+    ValueError for an unknown/self file_name/target, CycleError (via
+    has_relationship_cycle()) if the edge would close a cycle. Mutates and
+    returns `relationships`.
+    """
+    if file_name not in relationships:
+        raise ValueError(f"unknown file: {file_name}")
+    if target not in relationships:
+        raise ValueError(f"unknown file: {target}")
+    if file_name == target:
+        raise ValueError("a file can't depend on itself")
+
+    # the edge being added is file_name -> target; it closes a cycle exactly
+    # when target can already (transitively) reach file_name.
+    if has_relationship_cycle(relationships, target, file_name):
+        raise CycleError(file_name, target)
+
+    internal = relationships[file_name].setdefault("internal", [])
+    if target not in internal:
+        internal.append(target)
+
+    return relationships
+
+
+def remove_relationship(relationships: dict, file_name: str, target: str) -> dict:
+    """remove_dependency()'s counterpart for an already-finalized
+    `relationships` dict -- see add_relationship()'s docstring for why a
+    separate pair of functions exists for this shape. A no-op if no such
+    edge exists. Raises ValueError if file_name isn't in `relationships`.
+    """
+    if file_name not in relationships:
+        raise ValueError(f"unknown file: {file_name}")
+
+    internal = relationships[file_name].get("internal", [])
+    relationships[file_name]["internal"] = [d for d in internal if d != target]
+
+    return relationships
+
+
 def build_tree(files: dict) -> dict:
     stem_map = build_stem_map(files.keys())
     tree = {}

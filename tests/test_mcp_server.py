@@ -35,7 +35,7 @@ def test_all_tools_are_registered():
     tools = asyncio.run(mcp_server.mcp.list_tools())
     names = {t.name for t in tools}
     assert names == {
-        "get_overview", "list_files", "get_dependents",
+        "get_overview", "list_files", "get_relationships", "get_dependents",
         "get_blast_radius", "get_detail", "check_freshness", "search_project",
     }
 
@@ -151,6 +151,18 @@ def test_list_files_attaches_stale_warning_when_project_changed(tmp_path):
     data = _json_result(result)
     assert data["_stale"]["is_stale"] is True
     assert data["a.py"] == {"summary": "does a thing", "confidence": 1.0}  # real files untouched
+
+
+def test_get_relationships_via_call_tool(tmp_path):
+    aif_path = _write_sample_aif(tmp_path)
+    result = _call("get_relationships", {"aif_path": aif_path})
+
+    assert result.is_error is False
+    data = _json_result(result)
+    assert data == {
+        "a.py": {"internal": [], "external": []},
+        "b.py": {"internal": ["a.py"], "external": []},
+    }
 
 
 def test_get_dependents_via_call_tool(tmp_path):

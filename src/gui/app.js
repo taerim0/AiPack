@@ -477,6 +477,84 @@ function renderMiniGraph(name, parents, children, onSelect) {
   return svg;
 }
 
+// Read-only "whole project at a glance" view over the same build_tree()-
+// shaped dependency tree ({file: {internal: [...], external: [...]}})
+// renderRelationshipEditor below edits -- shown first when a pack review's
+// relationship section loads (see showReviewState()), instead of jumping
+// straight into per-file edit mode for the first flagged file the way an
+// earlier version did. The idea: let a human spot what actually looks wrong
+// by eye across the *whole* tree first, and only drop into the edit UI for a
+// file once they've decided (by looking, not by clicking through a search
+// list one file at a time) that it needs a change.
+//
+// Same roots-first + cycle-guarded traversal as corrector.py's terminal
+// print_current_tree() (a "root" is any file nothing else's `internal` list
+// points at) -- kept in sync with that function deliberately, since the two
+// are the browser and terminal versions of the identical judgment call.
+// Rendered with native <details>/<summary> so expand/collapse needs no JS
+// of its own and a large project (dozens of files) stays scannable by
+// collapsing subtrees rather than becoming one long scroll.
+//
+// Clicking a file's own row (icon + name) calls onSelectFile(name) instead
+// of toggling the <details> it may sit inside -- event.preventDefault() in
+// that row's click handler suppresses the native disclosure-triangle
+// toggle for clicks on the row itself, while a click on the actual triangle
+// (part of <summary>, not this row) still expands/collapses normally, the
+// same split VS Code's own file tree uses (chevron toggles, label opens).
+function renderDependencyTreeOverview(tree, allFiles, flaggedFiles, onSelectFile) {
+  const flagged = new Set(flaggedFiles);
+
+  function fileRow(name, note) {
+    const row = el("div", { class: `tree-row${flagged.has(name) ? " tree-flagged" : ""}` }, [
+      el("span", { text: "📄 " }),
+      flagged.has(name) ? el("span", { class: "tree-flag", text: "⚠️ " }) : null,
+      el("span", { class: "tree-name", text: name }),
+      note ? el("span", { class: "muted", text: ` ${note}` }) : null,
+    ]);
+    row.addEventListener("click", (e) => { e.preventDefault(); onSelectFile(name); });
+    return row;
+  }
+
+  function buildNode(name, ancestors) {
+    const deps = tree[name] || { internal: [], external: [] };
+    const children = [];
+    for (const dep of deps.internal) {
+      if (ancestors.has(dep)) {
+        children.push(fileRow(dep, "(순환 참조 → 생략)"));
+        continue;
+      }
+      children.push(buildNode(dep, new Set([...ancestors, dep])));
+    }
+    for (const ext of deps.external) {
+      children.push(el("div", { class: "tree-row muted" }, [el("span", { text: "📦 " }), el("span", { text: ext })]));
+    }
+
+    if (!children.length) return fileRow(name);
+    return el("details", { class: "tree-node", open: "" }, [
+      el("summary", {}, [fileRow(name)]),
+      el("div", { class: "tree-children" }, children),
+    ]);
+  }
+
+  const isChild = new Set();
+  for (const name of allFiles) {
+    for (const dep of tree[name]?.internal || []) isChild.add(dep);
+  }
+
+  const box = el("div", { class: "tree-overview" });
+  let roots = allFiles.filter(name => !isChild.has(name));
+  // Every file is somebody's dependency -- a full cycle with no natural
+  // root (see file/relationship.py's own docstring re: mutual-import
+  // cycles). corrector.py's terminal tree has the identical gap; rather
+  // than silently rendering nothing here, fall back to a flat list so
+  // "what files exist" still has an obvious answer.
+  if (!roots.length && allFiles.length) roots = allFiles;
+
+  for (const name of roots) box.appendChild(buildNode(name, new Set([name])));
+  if (!roots.length) box.appendChild(el("p", { class: "muted", text: "표시할 파일이 없습니다." }));
+  return box;
+}
+
 // Master-detail editor over a build_tree()-shaped dependency tree
 // ({file: {internal: [...], external: [...]}}). Rendering every file's full
 // edge list at once (an earlier version did this) doesn't scale past a
@@ -719,34 +797,58 @@ async function renderPackJob(jobId) {
 
     const treeError = el("div", { class: "error hidden" });
     const allFileNames = [...review.needs_review, ...review.auto_kept].map(e => e.file).sort();
-    // Default the relationship editor's selection to the first flagged file,
-    // if any -- a file low-confidence enough to need a summary review is
-    // also a reasonable first guess for "worth checking its dependencies too".
-    const relEditor = renderRelationshipEditor(
-      review.tree,
-      allFileNames,
-      async (file, target) => {
-        treeError.classList.add("hidden");
-        try {
-          const res = await apiPost("/api/pack/link", { job_id: jobId, file, target });
-          relEditor.setTree(res.tree);
-        } catch (e) {
-          treeError.textContent = e.message;
-          treeError.classList.remove("hidden");
-        }
-      },
-      async (file, target) => {
-        treeError.classList.add("hidden");
-        try {
-          const res = await apiPost("/api/pack/unlink", { job_id: jobId, file, target });
-          relEditor.setTree(res.tree);
-        } catch (e) {
-          treeError.textContent = e.message;
-          treeError.classList.remove("hidden");
-        }
-      },
-      review.needs_review[0]?.file
-    );
+    const flaggedFileNames = review.needs_review.map(e => e.file);
+
+    // Two views sharing one mutable tree: the read-only overview (default,
+    // see renderDependencyTreeOverview's own comment for why) and the
+    // per-file master-detail editor, swapped into the same container rather
+    // than both existing at once. currentTree is the single source of truth
+    // either view renders from, updated in place whenever a link/unlink
+    // actually commits server-side, so switching back to the overview after
+    // an edit reflects it immediately instead of the stale initial tree.
+    let currentTree = review.tree;
+    const relSection = el("div", {});
+
+    function showTreeOverview() {
+      relSection.innerHTML = "";
+      relSection.appendChild(renderDependencyTreeOverview(currentTree, allFileNames, flaggedFileNames, showEditView));
+    }
+
+    function showEditView(selectedFile) {
+      relSection.innerHTML = "";
+      let relEditor;
+      relEditor = renderRelationshipEditor(
+        currentTree,
+        allFileNames,
+        async (file, target) => {
+          treeError.classList.add("hidden");
+          try {
+            const res = await apiPost("/api/pack/link", { job_id: jobId, file, target });
+            currentTree = res.tree;
+            relEditor.setTree(currentTree);
+          } catch (e) {
+            treeError.textContent = e.message;
+            treeError.classList.remove("hidden");
+          }
+        },
+        async (file, target) => {
+          treeError.classList.add("hidden");
+          try {
+            const res = await apiPost("/api/pack/unlink", { job_id: jobId, file, target });
+            currentTree = res.tree;
+            relEditor.setTree(currentTree);
+          } catch (e) {
+            treeError.textContent = e.message;
+            treeError.classList.remove("hidden");
+          }
+        },
+        selectedFile
+      );
+      relSection.appendChild(el("button", { class: "secondary", text: "← 트리로 돌아가기", onclick: showTreeOverview }));
+      relSection.appendChild(relEditor.el);
+    }
+
+    showTreeOverview();
 
     const summaryInputs = {};
     const needsReviewBox = el("div", {}, review.needs_review.length
@@ -805,8 +907,8 @@ async function renderPackJob(jobId) {
       el("h3", { text: "코딩 룰" }), rulesList,
       el("div", { class: "toolbar" }, [newRuleInput, addRuleButton]),
       el("h3", { text: "파일 관계" }),
-      el("p", { class: "muted", text: "왼쪽에서 파일을 검색해 선택하면 그 파일의 관계만 그래프와 함께 표시됩니다. 그래프의 다른 파일 노드를 클릭하면 그쪽으로 이동합니다. \"끊기\"로 의존성 하나를 제거하거나, 검색창에 파일명을 입력해 새 의존성을 추가하세요. 외부 패키지(📦)는 읽기 전용입니다." }),
-      relEditor.el, treeError,
+      el("p", { class: "muted", text: "전체 의존성 트리입니다 (▶ 를 클릭해 하위 트리를 접거나 펼치세요). 수정하고 싶은 파일 이름을 클릭하면 그 파일의 관계 편집 화면이 열립니다 -- 그래프의 다른 파일 노드를 클릭해 이동하거나, \"끊기\"로 의존성을 제거하거나, 검색창에 파일명을 입력해 새 의존성을 추가할 수 있습니다. 외부 패키지(📦)는 읽기 전용입니다." }),
+      relSection, treeError,
       el("h3", { text: `⚠️ 검토 필요 (${review.needs_review.length}개)` }), needsReviewBox,
       el("h3", { text: `자동 승인됨 (${review.auto_kept.length}개, 필요 시 수정 가능)` }), autoKeptBox,
       el("div", { class: "copy-row" }, [submitButton, cancelButton]),
@@ -950,6 +1052,88 @@ async function renderFiles() {
   } catch (e) { showError(e); }
 }
 
+// Post-pack counterpart to the pack review screen's tree section (see
+// showReviewState()): the exact same two components (renderDependencyTree
+// Overview, renderRelationshipEditor), just sourced from an already-saved
+// project's /api/relationships instead of a live job's review.tree, and
+// edited via /api/relationships/link|unlink (pack_service.
+// link_saved_relationship()/unlink_saved_relationship() -- no job_id, edits
+// aif.json on disk directly) instead of /api/pack/link|unlink. Lets a human
+// fix a relationship they notice is wrong after packing without re-running
+// the whole pipeline. Low-confidence files (same 0.34 threshold
+// confidenceLevel()/corrector.py's triage() use) are flagged in the tree
+// the same way a review's needs_review list flags them, since "worth a
+// second look" doesn't stop being true just because packing already
+// finished.
+async function renderRelationships() {
+  nav.classList.remove("hidden");
+  showLoading();
+  const aifPath = getAif();
+  try {
+    const [relationships, files] = await Promise.all([
+      api("/api/relationships", { aif_path: aifPath }),
+      api("/api/files", { aif_path: aifPath }),
+    ]);
+    delete files._stale;
+    const allFileNames = Object.keys(relationships).sort();
+    const flaggedFileNames = allFileNames.filter(
+      name => confidenceLevel(files[name]?.confidence ?? 1.0) === "low"
+    );
+
+    let currentTree = relationships;
+    const section = el("div", {});
+    const editError = el("div", { class: "error hidden" });
+
+    function showTreeOverview() {
+      section.innerHTML = "";
+      section.appendChild(renderDependencyTreeOverview(currentTree, allFileNames, flaggedFileNames, showEditView));
+    }
+
+    function showEditView(selectedFile) {
+      section.innerHTML = "";
+      let relEditor;
+      relEditor = renderRelationshipEditor(
+        currentTree,
+        allFileNames,
+        async (file, target) => {
+          editError.classList.add("hidden");
+          try {
+            const res = await apiPost("/api/relationships/link", { aif_path: aifPath, file, target });
+            currentTree = res.relationships;
+            relEditor.setTree(currentTree);
+          } catch (e) {
+            editError.textContent = e.message;
+            editError.classList.remove("hidden");
+          }
+        },
+        async (file, target) => {
+          editError.classList.add("hidden");
+          try {
+            const res = await apiPost("/api/relationships/unlink", { aif_path: aifPath, file, target });
+            currentTree = res.relationships;
+            relEditor.setTree(currentTree);
+          } catch (e) {
+            editError.textContent = e.message;
+            editError.classList.remove("hidden");
+          }
+        },
+        selectedFile
+      );
+      section.appendChild(el("button", { class: "secondary", text: "← 트리로 돌아가기", onclick: showTreeOverview }));
+      section.appendChild(relEditor.el);
+    }
+
+    showTreeOverview();
+
+    app.innerHTML = "";
+    app.appendChild(el("div", { class: "card" }, [
+      el("h1", { text: "파일 관계" }),
+      el("p", { class: "muted", text: "▶ 를 클릭해 하위 트리를 접거나 펼치세요. 수정하고 싶은 파일 이름을 클릭하면 편집 화면이 열립니다 -- 변경 사항은 즉시 aif.json에 저장됩니다." }),
+      section, editError,
+    ]));
+  } catch (e) { showError(e); }
+}
+
 async function renderFileDetail(name, params) {
   nav.classList.remove("hidden");
   showLoading();
@@ -1057,6 +1241,7 @@ function route() {
     return renderFileDetail(decodeURIComponent(segments.slice(1).join("/")), params);
   }
   if (segments[0] === "search") return renderSearch();
+  if (segments[0] === "relationships") return renderRelationships();
   return renderLanding();
 }
 

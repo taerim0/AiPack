@@ -67,6 +67,7 @@ GUI session.
 """
 
 import contextlib
+import json
 import threading
 import uuid
 from pathlib import Path
@@ -76,8 +77,10 @@ from config import collect_and_scan
 from confidence import triage
 from edits import finalize_aif, set_file_summary, set_project_name, set_project_prompt, set_rules
 from file.relationship import add_dependency as _add_dependency
+from file.relationship import add_relationship as _add_relationship
 from file.relationship import build_tree
 from file.relationship import remove_dependency as _remove_dependency
+from file.relationship import remove_relationship as _remove_relationship
 from file.textutil import relative_key as _rel_key
 
 _jobs: dict[str, dict] = {}
@@ -418,6 +421,57 @@ def remove_dependency_in_job(job_id: str, file_name: str, target: str) -> dict:
         _require_reviewing(job)
         _remove_dependency(job["aif"]["files"], file_name, target)
         return build_tree(job["aif"]["files"])
+
+
+def _edit_saved_relationships(aif_path: str, edit) -> dict:
+    """Shared load/mutate/save for link_saved_relationship()/
+    unlink_saved_relationship() below -- `edit(relationships) -> relationships`
+    does the actual add_relationship()/remove_relationship() call.
+
+    Deliberately does NOT go through packager.save_aif(): that function
+    expects the *in-progress* pack shape (splitting each file's `compressed`
+    into detail.json, `_manifest` into cache.json -- see its own docstring),
+    neither of which exists any more on an aif.json already written by a
+    finished pack. Calling it on a freshly-reloaded, already-finalized aif
+    would overwrite detail.json with empty `compressed` bodies for every
+    file and wipe cache.json's manifest, purely as a side effect of editing
+    one relationship. This instead reads and rewrites aif.json alone, byte
+    for byte identical apart from the `relationships` field, leaving
+    detail.json/cache.json untouched.
+    """
+    with open(aif_path, "r", encoding="utf-8") as f:
+        aif = json.load(f)
+
+    relationships = edit(aif.get("relationships", {}))
+    aif["relationships"] = relationships
+
+    with open(aif_path, "w", encoding="utf-8") as f:
+        json.dump(aif, f, ensure_ascii=False, indent=2)
+
+    return relationships
+
+
+def link_saved_relationship(aif_path: str, file_name: str, target: str) -> dict:
+    """add_dependency_in_job()'s counterpart for a project that's already
+    been packed and saved -- no live job involved at all, just aif_path on
+    disk. Lets a human fix a relationship they notice is wrong *after*
+    packing without re-running the whole pipeline, from the same read-only
+    browse pages query_service.py's routes already serve. Wraps
+    file/relationship.add_relationship() (the `relationships`-shaped
+    counterpart to add_dependency(), which has nothing left to edit once
+    finalize_aif() has already pruned `dependencies` -- see that function's
+    own docstring). Raises the same ValueError/CycleError add_relationship()
+    does; OSError/json.JSONDecodeError if aif_path can't be read.
+    """
+    return _edit_saved_relationships(aif_path, lambda rel: _add_relationship(rel, file_name, target))
+
+
+def unlink_saved_relationship(aif_path: str, file_name: str, target: str) -> dict:
+    """remove_dependency_in_job()'s counterpart for an already-saved
+    project -- see link_saved_relationship()'s docstring for the full
+    reasoning. Wraps file/relationship.remove_relationship().
+    """
+    return _edit_saved_relationships(aif_path, lambda rel: _remove_relationship(rel, file_name, target))
 
 
 def cancel_job(job_id: str) -> bool:
