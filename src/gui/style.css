@@ -7,6 +7,7 @@
   --accent: #6ea8fe;
   --danger: #f2a154;
   --mono: "Consolas", "SFMono-Regular", Menlo, monospace;
+  --topbar-height: 42px;
 }
 
 * { box-sizing: border-box; }
@@ -18,6 +19,53 @@ body {
   font-family: -apple-system, "Segoe UI", Pretendard, sans-serif;
 }
 
+/* body is a flex column of [topbar, shell] rather than shell alone filling
+   the viewport -- the topbar (see below) is a sibling above it now, not
+   part of it, so shell only needs to fill whatever height that leaves. */
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* A thin native-menu-bar-style strip, not a SaaS dashboard's wide top nav:
+   just the app name plus a couple of global, always-reachable destinations
+   (start a pack, open options) that exist above and outside any loaded
+   project. The per-project section nav (Overview/Files/Relationships/
+   Search) stays exactly where it was -- the sidebar below -- since that
+   nav only makes sense once a project is actually loaded; this bar is the
+   one piece of chrome present on every screen, loaded project or not
+   (landing, mid-pack, review, browse). Sticky so it stays put while a long
+   page (Files, a big pack log) scrolls under it. See the sidebar's own
+   comment just below for why a local desktop program's chrome still reads
+   as sidebar-first, not top-bar-first -- this bar is deliberately thin and
+   sparse (menu bar, not a tab strip) to keep that same "runs on your
+   machine" feel rather than becoming a second, competing nav layer. */
+.topbar {
+  height: var(--topbar-height);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.topbar-brand { font-weight: 600; margin-right: 12px; }
+.topbar a {
+  padding: 6px 10px;
+  border-radius: 5px;
+  color: var(--text);
+  text-decoration: none;
+  opacity: 0.8;
+  font-size: 0.92em;
+}
+.topbar a:hover { opacity: 1; background: rgba(255, 255, 255, 0.05); }
+.topbar a.active { opacity: 1; color: var(--accent); background: rgba(110, 168, 254, 0.12); }
+
 /* Sidebar, not a top hyperlink bar -- a local desktop program's own window
    chrome (a settings/utility app's nav) reads as "runs on your machine"
    more than a SaaS dashboard's top bar does, matching what this GUI
@@ -28,7 +76,7 @@ body {
 .shell {
   display: flex;
   align-items: stretch;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--topbar-height));
 }
 
 .sidebar {
@@ -41,12 +89,11 @@ body {
   background: var(--panel);
   border-right: 1px solid var(--border);
   position: sticky;
-  top: 0;
+  top: var(--topbar-height);
   align-self: flex-start;
-  height: 100vh;
+  height: calc(100vh - var(--topbar-height));
   overflow-y: auto;
 }
-.sidebar-brand { font-weight: 600; padding: 0 20px 16px; }
 .sidebar a {
   display: block;
   padding: 9px 20px;
