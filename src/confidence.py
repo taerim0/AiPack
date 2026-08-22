@@ -20,6 +20,8 @@ difference. It's a triage signal, not a substitute for reading the file.
 
 import re
 
+from summarizer import SUMMARY_FAILED_PLACEHOLDER
+
 # Below this, a file's summary gets flagged for review in correct_aif();
 # at or above, it's auto-kept. Matches confidence_level()'s low/medium
 # boundary, so "needs review" and "labeled low confidence" mean the same
@@ -81,7 +83,18 @@ def estimate_confidence(summary: str, signatures: list[str]) -> float:
     signature word to appear -- a good one-line summary of a file with a
     dozen functions abstracts over most of them by design, and shouldn't
     read as "low confidence" just for not naming each one.
+
+    Checked before the no-signatures shortcut below, not after: a file with
+    no declared functions/classes (a thin index.ts that's just top-level
+    imports and a call, for instance -- a real one hit in testing) has no
+    source_tokens either, so generate_summaries()'s failure placeholder would
+    otherwise get the same free 1.0 a legitimately trivial file gets,
+    silently skipping the one review path (correct_aif(), see that
+    placeholder's own docstring) that's actually supposed to catch it.
     """
+    if summary == SUMMARY_FAILED_PLACEHOLDER:
+        return 0.0
+
     source_tokens = set()
     for sig in signatures:
         source_tokens |= _tokenize(sig)

@@ -39,6 +39,12 @@ MAX_WORKERS = 4
 # MAX_WORKERS' cross-batch parallelism.
 BATCH_SIZE = 8
 
+# generate_summaries()'s per-file placeholder on failure (see its own
+# docstring). Exposed as a constant, not just an inline literal, so
+# confidence.py can recognize it and force a failed summary to always read as
+# low-confidence -- see the comment there for why that check exists.
+SUMMARY_FAILED_PLACEHOLDER = "요약 생성 실패"
+
 
 def request_summary(file_path: str, data: dict) -> str:
     """Tries once to get one file's summary; returns an empty string on failure.
@@ -127,7 +133,7 @@ def generate_summaries(pending: dict[str, dict], root: Path) -> dict[str, str]:
         for future in as_completed(futures):
             for name, summary in future.result().items():
                 fp = name_to_fp[name]
-                results[fp] = summary or "요약 생성 실패"
+                results[fp] = summary or SUMMARY_FAILED_PLACEHOLDER
                 print(f"  ✅ {name}")
     return results
 
