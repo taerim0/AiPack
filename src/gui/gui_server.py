@@ -65,6 +65,7 @@ from flask import Flask, jsonify, request
 
 from gui import pack_service
 import query_service
+import settings as app_settings
 from file.relationship import CycleError
 
 # static_folder="." -- not "gui" -- since index.html/the app-*.js files/
@@ -105,6 +106,30 @@ def index():
 @app.route("/api/config")
 def api_config():
     return jsonify(_default_config)
+
+
+@app.route("/api/settings", methods=["GET", "POST"])
+def api_settings():
+    """GET returns settings.py's whole persisted shape (`output_dir` plus
+    `project_output_dirs`, the per-project pins -- see that module's own
+    docstring); the Options page only ever edits `output_dir` (the global
+    default) through here, since a pin is set implicitly by packing with an
+    explicit output path (pack_service.start_pack_job()), not through this
+    route. POST accepts a partial body -- {"output_dir": "..."} alone is the
+    only shape the Options page ever actually sends -- merged onto whatever
+    was already saved rather than requiring the whole shape back, so a
+    caller that only knows about one field can't accidentally wipe the
+    other out.
+    """
+    if request.method == "GET":
+        return jsonify(app_settings.load_settings())
+
+    data = request.get_json(silent=True) or {}
+    current = app_settings.load_settings()
+    if "output_dir" in data:
+        current["output_dir"] = (data.get("output_dir") or "").strip()
+    app_settings.save_settings(current)
+    return jsonify(current)
 
 
 def _project_dir_error(project_path: str):

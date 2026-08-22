@@ -22,6 +22,7 @@ import freshness
 from gui import gui_server
 import llm
 import packager
+import settings as app_settings
 
 
 @pytest.fixture
@@ -73,6 +74,30 @@ def test_config_reflects_startup_defaults(client):
     res = client.get("/api/config")
     assert res.get_json() == {"aif_path": "some/path.json", "project_path": None}
     gui_server._default_config["aif_path"] = None  # reset for other tests
+
+
+def test_settings_get_returns_defaults_when_unconfigured(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    res = client.get("/api/settings")
+    assert res.get_json() == {"output_dir": "", "project_output_dirs": {}}
+
+
+def test_settings_post_sets_the_global_output_dir(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    res = client.post("/api/settings", json={"output_dir": str(tmp_path / "out")})
+    assert res.get_json()["output_dir"] == str(tmp_path / "out")
+    assert app_settings.load_settings()["output_dir"] == str(tmp_path / "out")
+
+
+def test_settings_post_does_not_clobber_project_pins(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    app_settings.save_settings({"output_dir": "", "project_output_dirs": {"C:/proj": "D:/pinned"}})
+
+    client.post("/api/settings", json={"output_dir": str(tmp_path / "out")})
+
+    loaded = app_settings.load_settings()
+    assert loaded["output_dir"] == str(tmp_path / "out")
+    assert loaded["project_output_dirs"] == {"C:/proj": "D:/pinned"}
 
 
 def _wait_for_job(client, job_id, timeout=10):
