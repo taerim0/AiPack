@@ -11,6 +11,7 @@ been imported -- with whatever provider LLM_PROVIDER resolved to at that
 point -- by an earlier test file.
 """
 
+import builtins
 import json
 
 import checkpoint
@@ -104,6 +105,85 @@ def test_pack_use_llm_false_still_reuses_a_cached_real_summary(tmp_path, monkeyp
     aif = packager.pack(str(project), auto=True, interactive=False, use_llm=False)
 
     assert aif["files"]["main.py"]["summary"] == "Mock summary for local testing."
+
+
+def test_confirm_regenerate_failed_summaries_non_interactive_returns_false_without_prompting(monkeypatch):
+    def _unexpected_input(*a, **k):
+        raise AssertionError("input() must not be called when interactive=False")
+
+    monkeypatch.setattr(builtins, "input", _unexpected_input)
+
+    assert packager._confirm_regenerate_failed_summaries(["main.py"], interactive=False) is False
+
+
+def test_confirm_regenerate_failed_summaries_interactive_respects_choice(monkeypatch):
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: "1")
+    assert packager._confirm_regenerate_failed_summaries(["main.py"], interactive=True) is True
+
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: "2")
+    assert packager._confirm_regenerate_failed_summaries(["main.py"], interactive=True) is False
+
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: "")
+    assert packager._confirm_regenerate_failed_summaries(["main.py"], interactive=True) is False
+
+
+class _EmptySummaryProvider(llm.MockProvider):
+    """Answers rules/prompt/relationships normally (via MockProvider) but
+    returns an empty payload for any summary-shaped prompt, so every file's
+    summary comes back "" and generate_summaries() falls back to
+    SUMMARY_FAILED_PLACEHOLDER for each -- sets up "a previous pack already
+    cached a failure" without needing a real network failure.
+    """
+
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        if '"summaries"' in prompt or '"summary"' in prompt:
+            return "{}"
+        return super().generate(prompt, retry=retry)
+
+
+def test_pack_prompts_to_regenerate_a_cached_failed_summary_and_honors_yes(tmp_path, monkeypatch):
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    # first pack: the summary call fails for every file, so main.py's cached
+    # summary ends up being the literal failure placeholder
+    monkeypatch.setattr(llm, "_provider", _EmptySummaryProvider())
+    aif1 = packager.pack(str(project), auto=True, interactive=False)
+    assert aif1["files"]["main.py"]["summary"] == summarizer.SUMMARY_FAILED_PLACEHOLDER
+    packager.save_aif(aif1)
+
+    # second pack: file content unchanged (would normally reuse the cached
+    # summary as-is), but interactive + answering "1" should regenerate it
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: "1")
+    aif2 = packager.pack(str(project), auto=True, interactive=True)
+
+    assert aif2["files"]["main.py"]["summary"] == "Mock summary for local testing."
+
+
+def test_pack_leaves_cached_failed_summary_when_declined(tmp_path, monkeypatch):
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    monkeypatch.setattr(packager, "RESULT_DIR", tmp_path / "result")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    monkeypatch.setattr(llm, "_provider", _EmptySummaryProvider())
+    aif1 = packager.pack(str(project), auto=True, interactive=False)
+    packager.save_aif(aif1)
+
+    # non-interactive: no prompt at all, placeholder stays cached as-is
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    aif2 = packager.pack(str(project), auto=True, interactive=False)
+    assert aif2["files"]["main.py"]["summary"] == summarizer.SUMMARY_FAILED_PLACEHOLDER
+
+    # interactive but declined ("2"): same result, by explicit choice
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: "2")
+    aif3 = packager.pack(str(project), auto=True, interactive=True)
+    assert aif3["files"]["main.py"]["summary"] == summarizer.SUMMARY_FAILED_PLACEHOLDER
 
 
 def test_pack_attaches_tech_stack_detected_from_a_manifest_file(tmp_path, monkeypatch):
