@@ -187,6 +187,135 @@ def test_pack_leaves_cached_failed_summary_when_declined(tmp_path, monkeypatch):
     assert aif3["files"]["main.py"]["summary"] == summarizer.SUMMARY_FAILED_PLACEHOLDER
 
 
+class _EmptyRulesProvider(llm.MockProvider):
+    """Answers everything else normally (via MockProvider) but returns an
+    empty payload for any rules-shaped prompt, so analyze_rules() always
+    comes back with nothing and pack()'s `while not rules` loop keeps
+    calling checkpoint.handle_llm_failure() -- the end-to-end counterpart to
+    _EmptySummaryProvider above, for the loop covering item 7's "does the
+    rules/prompt failure menu still actually work" question rather than
+    just unit-testing handle_llm_failure() in isolation (see
+    tests/test_checkpoint.py for that half).
+    """
+
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        if '"rules"' in prompt:
+            return "{}"
+        return super().generate(prompt, retry=retry)
+
+
+class _FlakyRulesProvider(llm.MockProvider):
+    """Fails the first rules-shaped prompt, succeeds on every one after --
+    simulates "the server was briefly down, retrying actually helps" rather
+    than a permanently-broken call.
+    """
+
+    def __init__(self):
+        self.rules_calls = 0
+
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        if '"rules"' in prompt:
+            self.rules_calls += 1
+            if self.rules_calls == 1:
+                return "{}"
+        return super().generate(prompt, retry=retry)
+
+
+class _EmptyPromptProvider(llm.MockProvider):
+    """The prompt/AI-guide equivalent of _EmptyRulesProvider above -- rules
+    generation succeeds normally, but analyze_prompt() always comes back
+    empty, exercising pack()'s second, structurally identical `while not
+    prompt` loop.
+    """
+
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        if '"prompt"' in prompt:
+            return "{}"
+        return super().generate(prompt, retry=retry)
+
+
+def test_pack_rules_failure_noninteractive_checkpoints_and_stops(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", _EmptyRulesProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    def _unexpected_input(*a, **k):
+        raise AssertionError("input() must not be called when interactive=False")
+    monkeypatch.setattr(builtins, "input", _unexpected_input)
+
+    aif = packager.pack(str(project), auto=True, interactive=False)
+
+    assert aif == {}
+    assert (tmp_path / "checkpoint" / "project.json").exists()
+
+
+def test_pack_rules_failure_interactive_retry_recovers(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", _FlakyRulesProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    # "1" = retry -- handle_llm_failure()'s menu choice, asked exactly once
+    # (the first rules call fails, the retried second one succeeds)
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: "1")
+
+    aif = packager.pack(str(project), auto=True, interactive=True)
+
+    assert aif["rules"] == ["mock rule: methods use camelCase"]
+    assert not (tmp_path / "checkpoint" / "project.json").exists()
+
+
+def test_pack_rules_failure_interactive_manual_input_is_used(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", _EmptyRulesProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    # "2" = type a value directly -- handle_llm_failure() prompts twice:
+    # once for the menu choice, once for the value itself
+    responses = iter(["2", "manual rule one, manual rule two"])
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: next(responses))
+
+    aif = packager.pack(str(project), auto=True, interactive=True)
+
+    assert aif["rules"] == ["manual rule one", "manual rule two"]
+
+
+def test_pack_rules_failure_interactive_save_and_exit_checkpoints(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", _EmptyRulesProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: "3")  # save and exit
+
+    aif = packager.pack(str(project), auto=True, interactive=True)
+
+    assert aif == {}
+    assert (tmp_path / "checkpoint" / "project.json").exists()
+
+
+def test_pack_prompt_failure_noninteractive_checkpoints_and_stops(tmp_path, monkeypatch):
+    # Same wiring as the rules loop just above, but for the second,
+    # structurally identical `while not prompt` loop -- both need their own
+    # end-to-end proof since they're two separate call sites in packager.py.
+    monkeypatch.setattr(llm, "_provider", _EmptyPromptProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    aif = packager.pack(str(project), auto=True, interactive=False)
+
+    assert aif == {}
+    assert (tmp_path / "checkpoint" / "project.json").exists()
+
+
 def test_pack_attaches_tech_stack_detected_from_a_manifest_file(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
