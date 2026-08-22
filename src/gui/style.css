@@ -54,7 +54,12 @@ body {
   top: 0;
   z-index: 10;
 }
-.topbar-brand { font-weight: 600; margin-right: 12px; }
+/* A real link (-> "/", the bare-logo home screen), not just decorative
+   text -- still gets every .topbar a rule below (hover/active pill,
+   padding), just with its own font-size/weight on top so it still reads
+   as the app's wordmark rather than a fourth nav item that happens to say
+   "Ziplex". */
+.topbar-brand { font-weight: 600; font-size: 1em; margin-right: 4px; }
 .topbar a {
   padding: 6px 10px;
   border-radius: 5px;

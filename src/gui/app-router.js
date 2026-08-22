@@ -16,19 +16,24 @@ function route() {
   if (segments[0] === "pack" && segments.length === 2) { setActiveTopbar("pack"); return renderPackJob(segments[1]); }
 
   // Global destinations the topbar owns -- reachable with or without a
-  // project loaded, unlike everything below, which is either the landing
-  // page itself or a section of an already-loaded project. Checked before
-  // the aif-required guard just below for that reason: "no project loaded
-  // yet" should never bounce a request for Options back to landing.
+  // project loaded, unlike everything below, which is either a section of
+  // an already-loaded project or the "nothing recognized" fallback at the
+  // bottom. Checked before the aif-required guard just below for that
+  // reason: "no project loaded yet" should never bounce a request for
+  // Home/Pack/Check/Options back to some other one of these four.
+  if (segments.length === 0) { setActiveTopbar("home"); return renderHome(); }
+  if (segments[0] === "pack" && segments.length === 1) { setActiveTopbar("pack"); return renderPackHome(); }
+  if (segments[0] === "check") { setActiveTopbar("check"); return renderCheck(); }
   if (segments[0] === "options") { setActiveTopbar("options"); return renderOptions(); }
 
   if (!getAif() && segments[0] !== undefined && segments.length) {
-    // no project loaded yet -- bounce to landing regardless of requested route
-    location.hash = "#/";
+    // no project loaded yet -- bounce to the open-a-project screen (not the
+    // pack-new-project one) since hitting e.g. #/overview directly implies
+    // wanting to view something already packed, not start a fresh pack
+    location.hash = "#/check";
     return;
   }
 
-  if (segments.length === 0) { setActiveTopbar("pack"); return renderLanding(); }
   if (segments[0] === "overview") { setActiveTopbar(null); setActiveNav("overview"); return renderOverview(); }
   if (segments[0] === "files" && segments.length === 1) { setActiveTopbar(null); setActiveNav("files"); return renderFiles(); }
   if (segments[0] === "files" && segments.length >= 2) {
@@ -38,8 +43,11 @@ function route() {
   }
   if (segments[0] === "search") { setActiveTopbar(null); setActiveNav("search"); return renderSearch(); }
   if (segments[0] === "relationships") { setActiveTopbar(null); setActiveNav("relationships"); return renderRelationships(); }
-  setActiveTopbar("pack");
-  return renderLanding();
+  // Unrecognized route past this point only reaches here with a project
+  // already loaded (the guard above already caught the no-project case) --
+  // overview is the most sensible fallback then, not one of the topbar's
+  // own screens.
+  location.hash = "#/overview";
 }
 
 window.addEventListener("hashchange", route);

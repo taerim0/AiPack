@@ -1,34 +1,37 @@
-// The read-only browse pages plus the landing/pack-start page, split out
-// of app.js -- see app-core.js's header comment for the overall file
-// split and load order. This file: renderLanding() (open-existing-project
-// form + new-pack form + recent-projects list), renderOptions() (topbar's
-// second global destination, currently an empty placeholder), renderOverview(),
+// The read-only browse pages plus the topbar's four global-destination
+// pages, split out of app.js -- see app-core.js's header comment for the
+// overall file split and load order. This file: renderHome() (route "/",
+// the topbar brand/logo's own destination -- deliberately just a logo, no
+// real content of its own), renderPackHome() (new-pack form only -- route
+// "/pack", topbar's "프로젝트 패킹"), renderCheck() (open-existing-project
+// form + recent-projects list -- route "/check", topbar's "프로젝트
+// 확인"; these last two used to be one combined landing page at "/" until
+// the topbar grew a dedicated slot for each), renderOptions() (topbar's
+// fourth destination, currently an empty placeholder), renderOverview(),
 // renderFiles(), renderRelationships() (post-pack counterpart to the pack
 // review flow's relationship section, reusing app-graph.js's tree
 // components against an already-saved project), renderFileDetail(), and
 // renderSearch().
-function renderLanding() {
+
+// Just the logo -- no content of its own yet. Exists as its own screen
+// (rather than redirecting "/" straight to renderPackHome() or
+// renderCheck()) purely because the topbar's brand link needs *something*
+// to land on that isn't already one of the other three destinations'
+// business.
+function renderHome() {
   nav.classList.add("hidden");
   app.innerHTML = "";
-
-  const aifInput = el("input", { type: "text", id: "aif-input", placeholder: "예: result/my-project.json", value: getAif() });
-  const projInput = el("input", { type: "text", id: "proj-input", placeholder: "예: C:\\path\\to\\my-project (선택, 최신 여부 확인용)", value: getProject() });
-
-  const openCard = el("div", { class: "card landing-intro" }, [
-    el("h1", { text: "📦 Ziplex" }),
-    el("p", { text: "이미 pack된 프로젝트를 둘러보고, 필요한 부분을 복사해 다른 AI 챗에 붙여넣으세요." }),
-    el("label", { text: "aif.json 경로" }),
-    el("div", { class: "input-row" }, [aifInput, browseAifButton(aifInput)]),
-    el("label", { text: "프로젝트 폴더 경로 (선택)" }),
-    el("div", { class: "input-row" }, [projInput, browseButton(projInput)]),
-    el("div", { class: "copy-row" }, [
-      el("button", { text: "열기", onclick: () => {
-        const aif = aifInput.value.trim();
-        if (!aif) { aifInput.focus(); return; }
-        openProject(aif, projInput.value.trim());
-      } }),
+  app.appendChild(el("div", { class: "landing" }, [
+    el("div", { class: "card landing-intro" }, [
+      el("h1", { text: "📦 Ziplex" }),
+      el("p", { text: "로컬 프로젝트를 압축된 컨텍스트로 요약해, 원본 대신 AI에게 보여주는 도구입니다." }),
     ]),
-  ]);
+  ]));
+}
+
+function renderPackHome() {
+  nav.classList.add("hidden");
+  app.innerHTML = "";
 
   const packProjInput = el("input", { type: "text", placeholder: "예: C:\\path\\to\\my-project" });
   const packOutInput = el("input", { type: "text", placeholder: "선택. 비우면 result/<프로젝트명>.json" });
@@ -155,7 +158,7 @@ function renderLanding() {
   });
 
   const packCard = el("div", { class: "landing-pack card" }, [
-    el("h2", { text: "새 프로젝트 패킹" }),
+    el("h1", { text: "📦 프로젝트 패킹" }),
     el("p", { class: "muted", text: "파일을 선택해 LLM 요약을 생성한 뒤, 저장 전에 검토/수정할 수 있습니다 (CLI의 대화형 pack과 동일)." }),
     el("label", { text: "프로젝트 폴더 경로" }),
     el("div", { class: "input-row" }, [packProjInput, browseButton(packProjInput)]),
@@ -175,7 +178,46 @@ function renderLanding() {
     packError,
   ]);
 
-  const landingChildren = [openCard, packCard];
+  app.appendChild(el("div", { class: "landing" }, [packCard]));
+
+  // prefill from server-side --project if nothing saved locally yet
+  if (!getProject()) {
+    api("/api/config").then(cfg => {
+      if (cfg.project_path) packProjInput.value = cfg.project_path;
+    }).catch(() => {});
+  }
+}
+
+// The topbar's "프로젝트 확인" destination -- the open-existing-project form
+// (aif.json path + optional project folder path, for the freshness check)
+// plus the recent-projects list, both of which are about *reaching* an
+// already-packed project rather than creating one, unlike renderPackHome()
+// above. Recognition-rather-than-recall (Nielsen): a returning user
+// shouldn't have to re-type or re-browse-to a path they've already opened.
+function renderCheck() {
+  nav.classList.add("hidden");
+  app.innerHTML = "";
+
+  const aifInput = el("input", { type: "text", id: "aif-input", placeholder: "예: result/my-project.json", value: getAif() });
+  const projInput = el("input", { type: "text", id: "proj-input", placeholder: "예: C:\\path\\to\\my-project (선택, 최신 여부 확인용)", value: getProject() });
+
+  const openCard = el("div", { class: "card landing-intro" }, [
+    el("h1", { text: "📂 프로젝트 확인" }),
+    el("p", { text: "이미 pack된 프로젝트를 둘러보고, 필요한 부분을 복사해 다른 AI 챗에 붙여넣으세요." }),
+    el("label", { text: "aif.json 경로" }),
+    el("div", { class: "input-row" }, [aifInput, browseAifButton(aifInput)]),
+    el("label", { text: "프로젝트 폴더 경로 (선택)" }),
+    el("div", { class: "input-row" }, [projInput, browseButton(projInput)]),
+    el("div", { class: "copy-row" }, [
+      el("button", { text: "열기", onclick: () => {
+        const aif = aifInput.value.trim();
+        if (!aif) { aifInput.focus(); return; }
+        openProject(aif, projInput.value.trim());
+      } }),
+    ]),
+  ]);
+
+  const checkChildren = [openCard];
   const recent = getRecent();
   if (recent.length) {
     const recentList = el("div", { class: "recent-list" }, recent.map(r => {
@@ -192,26 +234,26 @@ function renderLanding() {
       ]);
       return row;
     }));
-    landingChildren.unshift(el("div", { class: "card recent-card" }, [el("h2", { text: "최근 프로젝트" }), recentList]));
+    checkChildren.unshift(el("div", { class: "card recent-card" }, [el("h2", { text: "최근 프로젝트" }), recentList]));
   }
-  app.appendChild(el("div", { class: "landing" }, landingChildren));
+  app.appendChild(el("div", { class: "landing" }, checkChildren));
 
   // prefill from server-side --aif/--project if nothing saved locally yet
   if (!getAif()) {
     api("/api/config").then(cfg => {
       if (cfg.aif_path) aifInput.value = cfg.aif_path;
-      if (cfg.project_path) { projInput.value = cfg.project_path; packProjInput.value = cfg.project_path; }
+      if (cfg.project_path) projInput.value = cfg.project_path;
     }).catch(() => {});
   }
 }
 
 // Placeholder for now -- reachable from the topbar (see index.html/
-// app-router.js) whether or not a project is loaded, same as renderLanding().
-// No settings actually live here yet; this just claims the route/nav slot
-// so the topbar has somewhere real to point, ahead of whatever options
-// (output folder location, per-project freshness checks, a translation
-// toggle -- see the roadmap items this GUI reorg is being driven by) end up
-// living here later.
+// app-router.js) whether or not a project is loaded, same as
+// renderPackHome()/renderCheck() above. No settings actually live here
+// yet; this just claims the route/nav slot so the topbar has somewhere
+// real to point, ahead of whatever options (output folder location,
+// per-project freshness checks, a translation toggle -- see the roadmap
+// items this GUI reorg is being driven by) end up living here later.
 function renderOptions() {
   nav.classList.add("hidden");
   app.innerHTML = "";
