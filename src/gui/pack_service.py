@@ -86,6 +86,32 @@ from file.textutil import relative_key as _rel_key
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()  # guards _jobs itself (insert/lookup) only -- see module docstring
 
+# One lock per aif.json path, not one global lock for every project -- same
+# "operation on A never blocks behind operation on unrelated B" reasoning as
+# _jobs_lock above. Guards every direct on-disk write to a given aif.json
+# (link_saved_relationship()/unlink_saved_relationship() below, and
+# submit_review()'s finalize-and-save): without this, two nearly-
+# simultaneous writes to the same file -- a double-click, two browser tabs
+# both on the Relationships page, or a live job's finalize racing a
+# post-pack relationship edit aimed at the same output path -- could each
+# read the same on-disk content, mutate their own in-memory copy, and write
+# back, silently losing whichever wrote first. Found by code review: every
+# *job* mutation already had this guard via job["lock"], but this on-disk
+# path (which isn't a job at all) didn't.
+_file_locks: dict[str, threading.Lock] = {}
+_file_locks_meta_lock = threading.Lock()  # guards creating a per-path lock, not the write itself
+
+
+def _lock_for_path(path: str) -> threading.Lock:
+    """Resolved to an absolute path first so 'aif.json' and './aif.json'
+    from two different requests -- or a relative job output_path vs. an
+    absolute one a GUI page happens to pass -- don't get two different
+    locks for what's actually the same file.
+    """
+    key = str(Path(path).resolve())
+    with _file_locks_meta_lock:
+        return _file_locks.setdefault(key, threading.Lock())
+
 # Bounds memory in a long-running GUI session -- a single-user local tool
 # has no other trigger (no request ever asks to delete a finished job) to
 # clean these up, and each one carries a full print()-captured log.
@@ -438,17 +464,21 @@ def _edit_saved_relationships(aif_path: str, edit) -> dict:
     one relationship. This instead reads and rewrites aif.json alone, byte
     for byte identical apart from the `relationships` field, leaving
     detail.json/cache.json untouched.
+
+    Guarded by _lock_for_path() (see its own comment) so the read-modify-
+    write can't race a concurrent edit to the same file.
     """
-    with open(aif_path, "r", encoding="utf-8") as f:
-        aif = json.load(f)
+    with _lock_for_path(aif_path):
+        with open(aif_path, "r", encoding="utf-8") as f:
+            aif = json.load(f)
 
-    relationships = edit(aif.get("relationships", {}))
-    aif["relationships"] = relationships
+        relationships = edit(aif.get("relationships", {}))
+        aif["relationships"] = relationships
 
-    with open(aif_path, "w", encoding="utf-8") as f:
-        json.dump(aif, f, ensure_ascii=False, indent=2)
+        with open(aif_path, "w", encoding="utf-8") as f:
+            json.dump(aif, f, ensure_ascii=False, indent=2)
 
-    return relationships
+        return relationships
 
 
 def link_saved_relationship(aif_path: str, file_name: str, target: str) -> dict:
@@ -537,10 +567,21 @@ def submit_review(
         # of them can touch this job's `aif` while it's being committed here.
         job["state"] = "finalizing"
 
+    # Computed before the save, not after: save_aif() derives this same
+    # path internally when output_path is None (RESULT_DIR/<project name>
+    # .json), and the lock below has to key on the exact file this write
+    # actually lands on -- a link_saved_relationship()/
+    # unlink_saved_relationship() call aimed at the same path (someone
+    # browsing this project's *previous* pack via the Relationships page
+    # while this job finishes) has to contend for the same lock, not a
+    # different one derived from a stale name.
+    output_path = job["output_path"]
+    result_path = Path(output_path) if output_path else packager.RESULT_DIR / f"{aif['project']['name']}.json"
+
     try:
-        with _capture_for_job(job):
+        with _lock_for_path(str(result_path)), _capture_for_job(job):
             aif = finalize_aif(aif)
-            packager.save_aif(aif, job["output_path"])
+            packager.save_aif(aif, output_path)
     except Exception as e:
         with job["lock"]:
             job["state"] = "error"
@@ -548,7 +589,6 @@ def submit_review(
             job["aif"] = None
         raise
 
-    result_path = Path(job["output_path"]) if job["output_path"] else packager.RESULT_DIR / f"{aif['project']['name']}.json"
     result = {"aif_path": str(result_path), "project_path": job["project_path"]}
     with job["lock"]:
         job["state"] = "done"
