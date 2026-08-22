@@ -240,11 +240,16 @@ def _capture_for_job(job: dict):
 
 def list_selectable_files(project_path: str) -> dict:
     """Runs config.collect_and_scan() over project_path and returns the
-    safe/dangerous split as sorted relative names -- the read-only step a
-    GUI file-selection screen calls before a pack job exists at all, so a
-    human sees the real file list (and why anything got excluded) instead of
+    safe/dangerous split -- the read-only step a GUI file-selection screen
+    calls before a pack job exists at all, so a human sees the real file
+    list (and *why* anything got flagged, not just that it did) instead of
     guessing. Whatever's checked from `safe` on submit becomes
-    start_pack_job()'s `selected_files`.
+    start_pack_job()'s `selected_files` -- and a `dangerous` entry's own
+    `file` name can be checked too: naming one there is this screen's
+    equivalent of the CLI's review_dangerous_files() prompt (see
+    packager.pack()'s `preselected` handling, which trusts a name from
+    either list equally), just as a checkbox a human ticks after seeing
+    this same reason/matched-line detail instead of a terminal prompt.
 
     collect_and_scan() already loads project_path's .ziplex.json (config.py)
     the same way pack() itself does, so a file this screen never shows can't
@@ -253,9 +258,13 @@ def list_selectable_files(project_path: str) -> dict:
     just silently wouldn't match anything in `preselected`.
     """
     scan_result = collect_and_scan(project_path)
+    dangerous = sorted(
+        ({**entry, "file": _rel_key(entry["file"], project_path)} for entry in scan_result["dangerous"]),
+        key=lambda entry: entry["file"],
+    )
     return {
         "safe": sorted(_rel_key(f, project_path) for f in scan_result["safe"]),
-        "dangerous": sorted(_rel_key(f, project_path) for f in scan_result["dangerous"]),
+        "dangerous": dangerous,
     }
 
 

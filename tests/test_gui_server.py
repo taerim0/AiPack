@@ -12,6 +12,7 @@ and _find_free_port()'s fallback when the requested port is already taken.
 import json
 import socket
 import time
+from unittest import mock
 
 import pytest
 
@@ -96,7 +97,12 @@ def test_api_select_files_splits_safe_and_dangerous(client, tmp_path):
     assert res.status_code == 200
     data = res.get_json()
     assert "main.py" in data["safe"]
-    assert "secret.env" in data["dangerous"]
+    # "dangerous" carries why, not just which -- a flat name list would
+    # give a GUI file-selection screen nothing to show a human beyond "this
+    # one's excluded, trust us"
+    assert data["dangerous"] == [{
+        "file": "secret.env", "reason": mock.ANY, "line": 1, "matched_text": 'API_KEY = "abc123"',
+    }]
 
 
 def test_api_select_files_missing_project_dir_is_404(client, tmp_path):

@@ -10,7 +10,7 @@ from file.scanner import scan_files
 from file.textutil import relative_key as _rel_key
 from text_references import find_text_references_for_file
 from tokenizer import analyze_tokens, analyze_tokens_with_compression
-from file.selector import select_files
+from file.selector import select_files, review_dangerous_files
 from llm import analyze_file_summary, analyze_rules, analyze_prompt
 from packager import pack, save_aif
 from corrector import correct_aif
@@ -161,8 +161,8 @@ def main():
 
         if scan_result["dangerous"]:
             print(f"\n⚠️  민감 파일 감지: {len(scan_result['dangerous'])}개")
-            for f in scan_result["dangerous"]:
-                print(f"  ❌ {f}")
+            for d in scan_result["dangerous"]:
+                print(f"  ❌ {d['file']} -- {d.get('reason') or '민감 정보로 추정됨'}")
 
         print(f"\n✅ 안전한 파일: {len(scan_result['safe'])}개")
 
@@ -180,11 +180,20 @@ def main():
     elif args.command == "select":
         scan_result = _collect_and_scan(args.path)
         safe_files = scan_result["safe"]
+        dangerous = scan_result["dangerous"]
 
-        if scan_result["dangerous"]:
-            print(f"\n⚠️  민감 파일 제외됨: {len(scan_result['dangerous'])}개")
-            for f in scan_result["dangerous"]:
-                print(f"  ❌ {f}")
+        if dangerous:
+            # always interactive (this whole subcommand is the interactive
+            # picker), so always offered the chance to include one anyway --
+            # same review file/selector.review_dangerous_files() gives
+            # pack()'s own picker path.
+            included_anyway = review_dangerous_files(dangerous, args.path)
+            safe_files = safe_files + included_anyway
+            excluded = [d["file"] for d in dangerous if d["file"] not in included_anyway]
+            if excluded:
+                print(f"\n⚠️  민감 파일 제외됨: {len(excluded)}개")
+                for f in excluded:
+                    print(f"  ❌ {f}")
 
         selected = select_files(safe_files, args.path)
 
