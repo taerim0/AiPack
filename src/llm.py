@@ -45,11 +45,29 @@ class GeminiProvider:
     regardless of which provider is active.
     """
 
-    def __init__(self, api_key: str | None = None, model: str = "gemini-flash-latest"):
+    # "-latest" is a floating alias, not a pinned release -- it can point at
+    # whatever's newest (and least provisioned) at any given moment. Verified
+    # directly during a real 503-frequency investigation: gemini-flash-latest
+    # returned 503 on 1 of 3 back-to-back calls while gemini-3.5-flash and
+    # gemini-3.7-flash (pinned point releases available at the same moment)
+    # returned 200 on all 3 -- consistent with the user's own independent
+    # observation that Google AI Studio showed the same 503s for this model,
+    # i.e. genuine upstream capacity, not something about our prompts/request
+    # pattern. A snapshot, not a permanent verdict -- capacity shifts over
+    # time -- so this stays the shipped default (unchanged, since it's what
+    # most users already have working) rather than being swapped outright;
+    # GEMINI_MODEL lets it be overridden without a code change instead.
+    DEFAULT_MODEL = "gemini-flash-latest"
+
+    def __init__(self, api_key: str | None = None, model: str | None = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        # Precedence: an explicit constructor arg (programmatic/test callers)
+        # wins over GEMINI_MODEL (a user's own .env override) wins over
+        # DEFAULT_MODEL.
+        resolved_model = model or os.getenv("GEMINI_MODEL") or self.DEFAULT_MODEL
         self.url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent?key={self.api_key}"
+            f"{resolved_model}:generateContent?key={self.api_key}"
         )
 
     def generate(self, prompt: str, retry: int = 5) -> str:

@@ -56,7 +56,7 @@ venv\Scripts\activate
 pip install -r requirement.txt        # note: filename has no "s"
 ```
 
-Add a `.env` with `GEMINI_API_KEY=...`, then:
+Add a `.env` with `GEMINI_API_KEY=...` (optionally `GEMINI_MODEL=...` too, if `gemini-flash-latest` is having a rough day — see [Tech stack](#tech-stack)), then:
 
 ```bash
 python src/cli.py pack ./your-project/                        # full pipeline, interactive
@@ -219,7 +219,7 @@ Ziplex packs one person's local snapshot — there's no shared server or live sy
 
 ## Tech stack
 
-Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript/Lua/GDScript grammars, GDScript via `tree-sitter-language-pack`) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest`, plain REST via `requests`) · [MCP](https://modelcontextprotocol.io/) · Flask · pywebview · `secretlint` · `pathspec`
+Python 3.11 · [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) (Python/Java/TypeScript/JavaScript/Lua/GDScript grammars, GDScript via `tree-sitter-language-pack`) · [tiktoken](https://github.com/openai/tiktoken) · Gemini API (`gemini-flash-latest` by default, overridable via `GEMINI_MODEL`; plain REST via `requests`) · [MCP](https://modelcontextprotocol.io/) · Flask · pywebview · `secretlint` · `pathspec`
 
 ## Roadmap
 
