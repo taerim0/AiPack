@@ -129,6 +129,97 @@ def test_start_pack_job_does_not_pin_when_output_path_left_blank(tmp_path, monke
     assert app_settings.load_settings()["project_output_dirs"] == {}
 
 
+class _EmptyRulesProvider(llm.MockProvider):
+    """Same idea as test_pack_integration.py's own _EmptyRulesProvider --
+    duplicated here rather than imported, since test modules in this suite
+    don't import fixtures from one another. Answers everything normally
+    except a rules-shaped prompt, which always comes back empty --
+    packager.pack()'s `while not rules` loop then keeps hitting
+    checkpoint.handle_llm_failure(), which under pack_service.py's always-
+    non-interactive pack() call checkpoints and stops (job ends up in state
+    "error"), exactly the scenario item 8's retry button exists for.
+    """
+
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        if '"rules"' in prompt:
+            return "{}"
+        return super().generate(prompt, retry=retry)
+
+
+def test_get_job_status_includes_retry_params(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+    output_path = tmp_path / "out" / "project.json"
+
+    job_id = pack_service.start_pack_job(
+        str(project), str(output_path), no_cache=True, no_llm=False, selected_files=["main.py"]
+    )
+    status = pack_service.get_job_status(job_id)
+
+    assert status["retry_params"] == {
+        "project_path": str(project),
+        "output_path": str(output_path),
+        "no_cache": True,
+        "no_llm": False,
+        "selected_files": ["main.py"],
+    }
+    _wait(job_id)
+
+
+def test_get_job_status_retry_params_output_path_stays_blank_when_left_blank(tmp_path, monkeypatch):
+    # Regression: start_pack_job() resolves a blank output_path into a
+    # concrete one internally (settings.py) before ever calling pack() --
+    # retry_params must echo back the *original* blank, not that resolved
+    # path, or reposting it on retry would look like an explicit choice and
+    # silently pin the project (see start_pack_job()'s own set_project_
+    # output_dir() call) even though nothing was ever typed. A global
+    # default is configured here specifically so the resolved output_path
+    # actually diverges from the caller's blank input -- without one
+    # configured, resolution stays None either way and this test can't
+    # tell the fixed behavior apart from the bug it's guarding against.
+    monkeypatch.setattr(app_settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+    app_settings.save_settings({"output_dir": str(tmp_path / "out"), "project_output_dirs": {}})
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    job_id = pack_service.start_pack_job(str(project), selected_files=["main.py"])
+    status = pack_service.get_job_status(job_id)
+
+    assert status["retry_params"]["output_path"] is None
+    _wait(job_id)
+    assert app_settings.load_settings()["project_output_dirs"] == {}  # confirms no pin was created
+
+
+def test_retrying_a_failed_job_resumes_from_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    monkeypatch.setattr(llm, "_provider", _EmptyRulesProvider())
+    job_id = pack_service.start_pack_job(str(project), selected_files=["main.py"])
+    status = _wait(job_id)
+    assert status["state"] == "error"
+    retry_params = pack_service.get_job_status(job_id)["retry_params"]
+
+    # the LLM starts behaving again; reposting the exact same retry_params
+    # should resume from the checkpoint handle_llm_failure() wrote, not
+    # start over -- confirmed by the "restored from checkpoint" log line
+    # packager.py only ever prints on that path.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    retry_job_id = pack_service.start_pack_job(**retry_params)
+    retry_status = _wait(retry_job_id)
+
+    assert retry_status["state"] == "reviewing"
+    assert any("체크포인트에서 복원" in line for line in retry_status["log"])
+
+
 def test_start_pack_job_pauses_in_reviewing_state(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")

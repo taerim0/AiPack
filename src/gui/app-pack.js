@@ -51,10 +51,41 @@ async function renderPackJob(jobId) {
   ]);
   app.appendChild(card);
 
-  function showErrorState(message) {
+  // retryParams (pack_service.get_job_status()'s own shape -- project_path/
+  // output_path/no_cache/no_llm/selected_files) lets a repeated-LLM-failure
+  // error screen offer a real way forward instead of a dead end: reposting
+  // it verbatim to /api/pack picks up from pack()'s own checkpoint
+  // (non-interactive resume is always-yes -- see checkpoint.
+  // resume_checkpoint_choice()) instead of a human having to reselect
+  // files/retype paths from scratch. Omitted (undefined) when the error
+  // came from somewhere that never got as far as having job state to read
+  // retry_params from (the status/review fetch itself failing) -- the
+  // "back to the pack form" button below still gives a way out either way.
+  function showErrorState(message, retryParams) {
     statusBadge.className = "pack-status error";
     statusBadge.textContent = t("pack.status.error");
+
+    const backButton = el("button", { class: "secondary", text: t("pack.backToPackForm"), onclick: () => {
+      location.hash = "#/pack";
+    } });
+    const buttons = [backButton];
+
+    if (retryParams) {
+      const retryButton = el("button", { text: t("pack.retry"), onclick: async () => {
+        retryButton.disabled = true;
+        try {
+          const { job_id } = await apiPost("/api/pack", retryParams);
+          location.hash = `#/pack/${job_id}`;
+        } catch (e) {
+          retryButton.disabled = false;
+          alert(e.message);
+        }
+      } });
+      buttons.unshift(retryButton);
+    }
+
     body.appendChild(el("div", { class: "error", text: message }));
+    body.appendChild(el("div", { class: "copy-row" }, buttons));
   }
 
   function showDoneState(result) {
@@ -295,7 +326,7 @@ async function renderPackJob(jobId) {
     stopped = true;
     if (data.state === "reviewing") return showReviewState();
     if (data.state === "done") return showDoneState(data.result);
-    return showErrorState(data.error || t("pack.unknownError"));
+    return showErrorState(data.error || t("pack.unknownError"), data.retry_params);
   }
   poll();
 }

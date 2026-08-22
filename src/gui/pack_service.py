@@ -436,6 +436,14 @@ def start_pack_job(
     The job pauses in state "reviewing" once analysis finishes; see
     get_review()/submit_review().
     """
+    # Exactly what the caller passed, before output_path gets resolved into
+    # a concrete path below -- get_job_status()'s retry_params echoes this
+    # one back (not the resolved output_path), so a "retry this failed job"
+    # request that started out blank doesn't get treated as an explicit
+    # path on retry and silently pin the project (see set_project_output_dir()
+    # just below -- only ever supposed to fire on a genuinely explicit
+    # value, never one this function resolved on the caller's behalf).
+    original_output_path = output_path
     if output_path:
         app_settings.set_project_output_dir(project_path, str(Path(output_path).parent))
     else:
@@ -451,6 +459,17 @@ def start_pack_job(
         "aif": None,
         "project_path": project_path,
         "output_path": output_path,
+        # Stashed only so get_job_status() can hand back a retry_params
+        # payload identical in shape to what gui_server.py's /api/pack
+        # route accepts -- a failed job's error screen can then just repost
+        # this verbatim (see app-pack.js's showErrorState()) instead of
+        # sending a human back to reselect files/retype paths from scratch,
+        # letting pack()'s own non-interactive checkpoint auto-resume (see
+        # checkpoint.resume_checkpoint_choice()) pick up where it left off.
+        "no_cache": no_cache,
+        "no_llm": no_llm,
+        "selected_files": selected_files or [],
+        "retry_output_path": original_output_path,
         "lock": threading.Lock(),
         "cancel_action": None,  # set by request_cancel(), consumed by _check_cancelled_for()
         "cancel_result": None,  # set once cancel_action is consumed, read by _run() after pack() returns
@@ -487,6 +506,19 @@ def get_job_status(job_id: str, since: int = 0) -> dict | None:
     plus only the log lines from index `since` onward, so a polling client
     can pass back the length it already has instead of re-fetching the whole
     log (potentially thousands of lines on a large project) on every poll.
+
+    retry_params is start_pack_job()'s own argument shape (project_path/
+    output_path/no_cache/no_llm/selected_files) echoed straight back --
+    always present, not just on "error", since it costs nothing to include
+    and keeps this function's shape uniform. Its real purpose is the error
+    state: a repeated LLM failure lands the job in "error" via
+    checkpoint.handle_llm_failure()'s non-interactive default (checkpoint
+    and stop -- see packager.py), and until this existed the only way
+    forward from that screen was abandoning the job and redoing file
+    selection from scratch. Reposting this verbatim to /api/pack instead
+    lets pack()'s own checkpoint-resume logic (resume_checkpoint_choice(),
+    always-yes when non-interactive) pick up from exactly where it left
+    off.
     """
     try:
         job = _lookup_job(job_id)
@@ -499,6 +531,13 @@ def get_job_status(job_id: str, since: int = 0) -> dict | None:
             "log_len": len(job["log"]),
             "result": job["result"],
             "error": job["error"],
+            "retry_params": {
+                "project_path": job["project_path"],
+                "output_path": job["retry_output_path"],
+                "no_cache": job["no_cache"],
+                "no_llm": job["no_llm"],
+                "selected_files": job["selected_files"],
+            },
         }
 
 
