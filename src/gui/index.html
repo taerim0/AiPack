@@ -6,16 +6,18 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<nav id="nav" class="nav hidden">
-  <span class="brand">📦 Ziplex</span>
-  <a href="#/overview">Overview</a>
-  <a href="#/files">Files</a>
-  <a href="#/relationships">Relationships</a>
-  <a href="#/search">Search</a>
-  <a href="#/" class="change-project">프로젝트 변경</a>
+<div class="shell">
+<nav id="nav" class="sidebar hidden">
+  <div class="sidebar-brand">📦 Ziplex</div>
+  <a href="#/overview" data-route="overview">📊 Overview</a>
+  <a href="#/files" data-route="files">📄 Files</a>
+  <a href="#/relationships" data-route="relationships">🔗 Relationships</a>
+  <a href="#/search" data-route="search">🔍 Search</a>
   <span id="stale-badge" class="stale-badge hidden">⚠️ 변경됨</span>
+  <a href="#/" class="change-project">📂 프로젝트 변경</a>
 </nav>
 <main id="app"></main>
+</div>
 <script src="app-core.js"></script>
 <script src="app-graph.js"></script>
 <script src="app-pack.js"></script>

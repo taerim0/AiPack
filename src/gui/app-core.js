@@ -192,3 +192,15 @@ function setStale(stale) {
     staleBadge.classList.add("hidden");
   }
 }
+
+// Highlights the current section in the sidebar (see index.html's
+// data-route attributes) -- a sidebar needs a clear "you are here"
+// indicator the way the old top nav-bar's plain hyperlink list never did.
+// Called once from app-router.js's route() per navigation, not from each
+// individual render*() -- keeping "which section is this route" in one
+// place instead of every page needing to know its own nav entry.
+function setActiveNav(routeName) {
+  for (const a of nav.querySelectorAll("a[data-route]")) {
+    a.classList.toggle("active", a.dataset.route === routeName);
+  }
+}

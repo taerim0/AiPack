@@ -22,13 +22,14 @@ function route() {
   }
 
   if (segments.length === 0) return renderLanding();
-  if (segments[0] === "overview") return renderOverview();
-  if (segments[0] === "files" && segments.length === 1) return renderFiles();
+  if (segments[0] === "overview") { setActiveNav("overview"); return renderOverview(); }
+  if (segments[0] === "files" && segments.length === 1) { setActiveNav("files"); return renderFiles(); }
   if (segments[0] === "files" && segments.length >= 2) {
+    setActiveNav("files"); // a file's own detail page still belongs to the Files section
     return renderFileDetail(decodeURIComponent(segments.slice(1).join("/")), params);
   }
-  if (segments[0] === "search") return renderSearch();
-  if (segments[0] === "relationships") return renderRelationships();
+  if (segments[0] === "search") { setActiveNav("search"); return renderSearch(); }
+  if (segments[0] === "relationships") { setActiveNav("relationships"); return renderRelationships(); }
   return renderLanding();
 }
 
