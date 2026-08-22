@@ -1,7 +1,8 @@
 // The read-only browse pages plus the landing/pack-start page, split out
 // of app.js -- see app-core.js's header comment for the overall file
 // split and load order. This file: renderLanding() (open-existing-project
-// form + new-pack form + recent-projects list), renderOverview(),
+// form + new-pack form + recent-projects list), renderOptions() (topbar's
+// second global destination, currently an empty placeholder), renderOverview(),
 // renderFiles(), renderRelationships() (post-pack counterpart to the pack
 // review flow's relationship section, reusing app-graph.js's tree
 // components against an already-saved project), renderFileDetail(), and
@@ -202,6 +203,24 @@ function renderLanding() {
       if (cfg.project_path) { projInput.value = cfg.project_path; packProjInput.value = cfg.project_path; }
     }).catch(() => {});
   }
+}
+
+// Placeholder for now -- reachable from the topbar (see index.html/
+// app-router.js) whether or not a project is loaded, same as renderLanding().
+// No settings actually live here yet; this just claims the route/nav slot
+// so the topbar has somewhere real to point, ahead of whatever options
+// (output folder location, per-project freshness checks, a translation
+// toggle -- see the roadmap items this GUI reorg is being driven by) end up
+// living here later.
+function renderOptions() {
+  nav.classList.add("hidden");
+  app.innerHTML = "";
+  app.appendChild(el("div", { class: "landing" }, [
+    el("div", { class: "card landing-intro" }, [
+      el("h1", { text: "⚙️ 옵션" }),
+      el("p", { text: "아직 구현된 옵션이 없습니다. 추후 이곳에 추가될 예정입니다." }),
+    ]),
+  ]));
 }
 
 async function renderOverview() {
