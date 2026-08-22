@@ -8,21 +8,22 @@
 <body>
 <header id="topbar" class="topbar">
   <a href="#/" class="topbar-brand" data-topbar="home">📦 Ziplex</a>
-  <a href="#/pack" data-topbar="pack">📦 프로젝트 패킹</a>
-  <a href="#/check" data-topbar="check">📂 프로젝트 확인</a>
-  <a href="#/options" data-topbar="options">⚙️ 옵션</a>
+  <a href="#/pack" data-topbar="pack" data-i18n="nav.pack">📦 프로젝트 패킹</a>
+  <a href="#/check" data-topbar="check" data-i18n="nav.check">📂 프로젝트 확인</a>
+  <a href="#/options" data-topbar="options" data-i18n="nav.options">⚙️ 옵션</a>
 </header>
 <div class="shell">
 <nav id="nav" class="sidebar hidden">
-  <a href="#/overview" data-route="overview">📊 Overview</a>
-  <a href="#/files" data-route="files">📄 Files</a>
-  <a href="#/relationships" data-route="relationships">🔗 Relationships</a>
-  <a href="#/search" data-route="search">🔍 Search</a>
-  <span id="stale-badge" class="stale-badge hidden">⚠️ 변경됨</span>
-  <a href="#/check" class="change-project">📂 프로젝트 변경</a>
+  <a href="#/overview" data-route="overview" data-i18n="nav.overview">📊 Overview</a>
+  <a href="#/files" data-route="files" data-i18n="nav.files">📄 Files</a>
+  <a href="#/relationships" data-route="relationships" data-i18n="nav.relationships">🔗 Relationships</a>
+  <a href="#/search" data-route="search" data-i18n="nav.search">🔍 Search</a>
+  <span id="stale-badge" class="stale-badge hidden" data-i18n="core.stale.badge">⚠️ 변경됨</span>
+  <a href="#/check" class="change-project" data-i18n="nav.changeProject">📂 프로젝트 변경</a>
 </nav>
 <main id="app"></main>
 </div>
+<script src="app-i18n.js"></script>
 <script src="app-core.js"></script>
 <script src="app-graph.js"></script>
 <script src="app-pack.js"></script>

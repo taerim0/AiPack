@@ -24,7 +24,7 @@ function renderHome() {
   app.appendChild(el("div", { class: "landing" }, [
     el("div", { class: "card landing-intro" }, [
       el("h1", { text: "📦 Ziplex" }),
-      el("p", { text: "로컬 프로젝트를 압축된 컨텍스트로 요약해, 원본 대신 AI에게 보여주는 도구입니다." }),
+      el("p", { text: t("home.tagline") }),
     ]),
   ]));
 }
@@ -33,14 +33,14 @@ function renderPackHome() {
   nav.classList.add("hidden");
   app.innerHTML = "";
 
-  const packProjInput = el("input", { type: "text", placeholder: "예: C:\\path\\to\\my-project" });
-  const packOutInput = el("input", { type: "text", placeholder: "선택. 비우면 result/<프로젝트명>.json" });
+  const packProjInput = el("input", { type: "text", placeholder: t("pack.form.projectPathPlaceholder") });
+  const packOutInput = el("input", { type: "text", placeholder: t("pack.form.outputPathPlaceholder") });
   const noCacheInput = el("input", { type: "checkbox" });
   const noLlmInput = el("input", { type: "checkbox" });
   const packError = el("div", { class: "error hidden" });
-  const loadFilesButton = el("button", { class: "secondary", text: "파일 목록 불러오기" });
+  const loadFilesButton = el("button", { class: "secondary", text: t("pack.form.loadFiles") });
   const fileListBox = el("div", { class: "hidden" });
-  const packButton = el("button", { class: "hidden", text: "패킹 시작" });
+  const packButton = el("button", { class: "hidden", text: t("pack.form.start") });
 
   let selectableCheckboxes = [];
   let dangerousCheckboxes = [];
@@ -66,7 +66,7 @@ function renderPackHome() {
       fileListBox.innerHTML = "";
 
       if (!data.safe.length) {
-        fileListBox.appendChild(el("p", { class: "muted", text: "선택 가능한 안전한 파일이 없습니다." }));
+        fileListBox.appendChild(el("p", { class: "muted", text: t("pack.form.noSafeFiles") }));
       } else {
         const selectAll = el("input", { type: "checkbox", checked: "checked" });
         selectAll.checked = true;
@@ -74,7 +74,7 @@ function renderPackHome() {
           for (const cb of selectableCheckboxes) cb.checked = selectAll.checked;
         });
         fileListBox.appendChild(el("label", { class: "file-checklist-row", style: "font-weight:600" }, [
-          selectAll, el("span", { text: `전체 ${data.safe.length}개 파일` }),
+          selectAll, el("span", { text: t("pack.form.allFiles", { n: data.safe.length }) }),
         ]));
 
         const list = el("div", { class: "file-checklist" });
@@ -105,15 +105,15 @@ function renderPackHome() {
       // two lists merge back into one selected_files array.
       if (data.dangerous.length) {
         const box = el("div", { class: "dangerous-files" }, [
-          el("p", { class: "muted", text: `⚠️ 민감 파일 ${data.dangerous.length}개 감지됨 (기본 제외 -- 아래에서 확인 후 필요하면 포함)` }),
+          el("p", { class: "muted", text: t("pack.form.dangerousDetected", { n: data.dangerous.length }) }),
         ]);
         for (const entry of data.dangerous) {
           const cb = el("input", { type: "checkbox", "data-name": entry.file });
           dangerousCheckboxes.push(cb);
 
-          const detail = [el("div", { class: "dangerous-file-reason", text: entry.reason || "민감 정보로 추정됨" })];
+          const detail = [el("div", { class: "dangerous-file-reason", text: entry.reason || t("pack.form.dangerousDefaultReason") })];
           if (entry.line && entry.matched_text != null) {
-            detail.push(el("div", { class: "dangerous-file-line", text: `${entry.line}번째 줄: ${entry.matched_text}` }));
+            detail.push(el("div", { class: "dangerous-file-line", text: t("pack.form.dangerousLine", { line: entry.line, text: entry.matched_text }) }));
           }
 
           box.appendChild(el("div", { class: "dangerous-file-row" }, [
@@ -143,7 +143,7 @@ function renderPackHome() {
     const selected_files = [...selectableCheckboxes, ...dangerousCheckboxes]
       .filter(cb => cb.checked).map(cb => cb.dataset.name);
     if (!selected_files.length) {
-      packError.textContent = "선택된 파일이 없습니다";
+      packError.textContent = t("pack.form.noFilesSelected");
       packError.classList.remove("hidden");
       return;
     }
@@ -166,19 +166,19 @@ function renderPackHome() {
   });
 
   const packCard = el("div", { class: "landing-pack card" }, [
-    el("h1", { text: "📦 프로젝트 패킹" }),
-    el("p", { class: "muted", text: "파일을 선택해 LLM 요약을 생성한 뒤, 저장 전에 검토/수정할 수 있습니다 (CLI의 대화형 pack과 동일)." }),
-    el("label", { text: "프로젝트 폴더 경로" }),
+    el("h1", { text: t("nav.pack") }),
+    el("p", { class: "muted", text: t("pack.form.description") }),
+    el("label", { text: t("pack.form.projectPathLabel") }),
     el("div", { class: "input-row" }, [packProjInput, browseButton(packProjInput)]),
-    el("label", { text: "출력 경로 (선택)" }),
+    el("label", { text: t("pack.form.outputPathLabel") }),
     el("div", { class: "input-row" }, [packOutInput, browseSaveButton(packOutInput)]),
     el("label", { style: "display:flex;align-items:center;gap:6px;margin-top:14px" }, [
       noCacheInput,
-      el("span", { text: "이전 pack 캐시 무시 (변경 없는 파일도 전체 재요약)" }),
+      el("span", { text: t("pack.form.noCacheLabel") }),
     ]),
     el("label", { style: "display:flex;align-items:center;gap:6px;margin-top:6px" }, [
       noLlmInput,
-      el("span", { text: "LLM 사용 안 함 (GEMINI_API_KEY 불필요 -- 요약은 시그니처/의존성만으로 자동 생성, 코딩 룰/AI 가이드 생략)" }),
+      el("span", { text: t("pack.form.noLlmLabel") }),
     ]),
     el("div", { class: "copy-row" }, loadFilesButton),
     fileListBox,
@@ -206,18 +206,18 @@ function renderCheck() {
   nav.classList.add("hidden");
   app.innerHTML = "";
 
-  const aifInput = el("input", { type: "text", id: "aif-input", placeholder: "예: result/my-project.json", value: getAif() });
-  const projInput = el("input", { type: "text", id: "proj-input", placeholder: "예: C:\\path\\to\\my-project (선택, 최신 여부 확인용)", value: getProject() });
+  const aifInput = el("input", { type: "text", id: "aif-input", placeholder: t("check.form.aifPlaceholder"), value: getAif() });
+  const projInput = el("input", { type: "text", id: "proj-input", placeholder: t("check.form.projectPlaceholder"), value: getProject() });
 
   const openCard = el("div", { class: "card landing-intro" }, [
-    el("h1", { text: "📂 프로젝트 확인" }),
-    el("p", { text: "이미 pack된 프로젝트를 둘러보고, 필요한 부분을 복사해 다른 AI 챗에 붙여넣으세요." }),
-    el("label", { text: "aif.json 경로" }),
+    el("h1", { text: t("nav.check") }),
+    el("p", { text: t("check.form.description") }),
+    el("label", { text: t("check.form.aifLabel") }),
     el("div", { class: "input-row" }, [aifInput, browseAifButton(aifInput)]),
-    el("label", { text: "프로젝트 폴더 경로 (선택)" }),
+    el("label", { text: t("check.form.projectLabel") }),
     el("div", { class: "input-row" }, [projInput, browseButton(projInput)]),
     el("div", { class: "copy-row" }, [
-      el("button", { text: "열기", onclick: () => {
+      el("button", { text: t("check.form.open"), onclick: () => {
         const aif = aifInput.value.trim();
         if (!aif) { aifInput.focus(); return; }
         openProject(aif, projInput.value.trim());
@@ -242,7 +242,7 @@ function renderCheck() {
         api("/api/freshness", { project_path: r.project, aif_path: r.aif })
           .then(report => {
             const changedCount = (report.changed?.length || 0) + (report.added?.length || 0) + (report.removed?.length || 0);
-            badge.textContent = report.is_stale ? `⚠️ ${changedCount}개 변경` : "✅ 최신";
+            badge.textContent = report.is_stale ? t("check.freshness.stale", { n: changedCount }) : t("check.freshness.fresh");
             badge.classList.toggle("stale", !!report.is_stale);
           })
           .catch(() => {}); // typo'd/moved path, missing cache.json, ... -- leave the badge blank
@@ -264,7 +264,7 @@ function renderCheck() {
       ]);
       return row;
     }));
-    checkChildren.unshift(el("div", { class: "card recent-card" }, [el("h2", { text: "최근 프로젝트" }), recentList]));
+    checkChildren.unshift(el("div", { class: "card recent-card" }, [el("h2", { text: t("check.recentTitle") }), recentList]));
   }
   app.appendChild(el("div", { class: "landing" }, checkChildren));
 
@@ -278,10 +278,13 @@ function renderCheck() {
 }
 
 // Reachable from the topbar (see index.html/app-router.js) whether or not
-// a project is loaded, same as renderPackHome()/renderCheck() above. Only
-// one real setting so far -- the default output folder new packs save to
-// (settings.py's `output_dir`, GET/POST /api/settings) -- ahead of
-// whatever else (per-project freshness checks, a translation toggle -- see
+// a project is loaded, same as renderPackHome()/renderCheck() above. Two
+// settings so far: the GUI's own display language (app-i18n.js's
+// getLang()/setLang(), localStorage-backed -- purely client-side, so no
+// server round-trip the way the output folder below needs) and the
+// default output folder new packs save to (settings.py's `output_dir`,
+// GET/POST /api/settings) -- ahead of whatever else (per-project
+// freshness checks, translating a *packed project's* own content -- see
 // the roadmap items this GUI reorg is being driven by) end up living here
 // later. Per-project folder pins aren't edited here at all: typing an
 // explicit path in renderPackHome()'s own "출력 경로" field is what sets
@@ -291,10 +294,27 @@ function renderOptions() {
   nav.classList.add("hidden");
   app.innerHTML = "";
 
-  const outputDirInput = el("input", { type: "text", placeholder: "비우면 result/<프로젝트명>.json (Ziplex 설치 폴더 내부)" });
-  const saveButton = el("button", { text: "저장" });
-  const savedNote = el("span", { class: "muted hidden", text: "저장됨" });
+  const outputDirInput = el("input", { type: "text", placeholder: t("options.outputDirPlaceholder") });
+  const saveButton = el("button", { text: t("options.save") });
+  const savedNote = el("span", { class: "muted hidden", text: t("options.saved") });
   const errorBox = el("div", { class: "error hidden" });
+
+  // GUI display-language switcher (app-i18n.js) -- ko/en only for now, easy
+  // to add more later since every string in this app is already keyed
+  // through t(), not hardcoded per call site. Re-running route() after a
+  // change re-renders whatever page is current (this one included) in the
+  // new language; applyStaticI18n() separately re-translates index.html's
+  // own static topbar/sidebar markup, which no render*() call touches.
+  const langSelect = el("select", {}, [
+    el("option", { value: "ko", text: "한국어" }),
+    el("option", { value: "en", text: "English" }),
+  ]);
+  langSelect.value = getLang();
+  langSelect.addEventListener("change", () => {
+    setLang(langSelect.value);
+    applyStaticI18n();
+    route();
+  });
 
   saveButton.addEventListener("click", async () => {
     savedNote.classList.add("hidden");
@@ -313,11 +333,15 @@ function renderOptions() {
 
   app.appendChild(el("div", { class: "landing" }, [
     el("div", { class: "card landing-intro" }, [
-      el("h1", { text: "⚙️ 옵션" }),
+      el("h1", { text: t("nav.options") }),
     ]),
     el("div", { class: "card" }, [
-      el("h2", { text: "기본 저장 폴더" }),
-      el("p", { class: "muted", text: "새로 패킹하는 프로젝트가 기본으로 저장될 폴더입니다. 패킹 화면의 \"출력 경로\"에 직접 경로를 입력한 프로젝트는 이 설정 대신 그 경로를 계속 기억해 사용합니다." }),
+      el("h2", { text: t("options.languageTitle") }),
+      el("div", { class: "input-row" }, [langSelect]),
+    ]),
+    el("div", { class: "card" }, [
+      el("h2", { text: t("options.outputDirTitle") }),
+      el("p", { class: "muted", text: t("options.outputDirDescription") }),
       el("div", { class: "input-row" }, [outputDirInput, browseButton(outputDirInput)]),
       el("div", { class: "copy-row" }, [saveButton, savedNote]),
       errorBox,
@@ -334,11 +358,13 @@ async function renderOverview() {
     const data = await api("/api/overview", { aif_path: getAif(), project_path: getProject() });
     setStale(data._stale);
     const rulesList = el("ul", {}, (data.rules || []).map(r => el("li", { text: r })));
-    const tokenRows = Object.entries(data.tokens || {}).map(([model, t]) =>
+    // named `tok`, not `t` -- this file's own t() (app-i18n.js) would
+    // otherwise be shadowed inside this callback's scope.
+    const tokenRows = Object.entries(data.tokens || {}).map(([model, tok]) =>
       el("tr", {}, [
         el("td", { text: model }),
-        el("td", { text: `${t.original} → ${t.compressed}` }),
-        el("td", { text: `${t.saved_pct}%` }),
+        el("td", { text: `${tok.original} → ${tok.compressed}` }),
+        el("td", { text: `${tok.saved_pct}%` }),
       ])
     );
 
@@ -348,8 +374,8 @@ async function renderOverview() {
 
     app.innerHTML = "";
     app.appendChild(el("div", { class: "card" }, [
-      el("h1", { text: data.project.name || "(제목 없음)" }),
-      el("h2", { text: `파일 ${data.file_count}개` }),
+      el("h1", { text: data.project.name || t("overview.untitled") }),
+      el("h2", { text: t("overview.fileCount", { n: data.file_count }) }),
       el("p", { text: data.project.prompt || "" }),
       el("h3", { text: "Rules" }), rulesList,
       el("h3", { text: "Tokens" }),
@@ -370,7 +396,7 @@ async function renderFiles() {
     setStale(data._stale);
     delete data._stale;
 
-    const filterInput = el("input", { type: "text", placeholder: "파일명/요약 검색..." });
+    const filterInput = el("input", { type: "text", placeholder: t("files.searchPlaceholder") });
     const tbody = el("tbody");
 
     // null = original (server) order; otherwise toggled asc/desc on header
@@ -379,19 +405,19 @@ async function renderFiles() {
     let sortKey = null;
     let sortDir = 1;
     function sortArrow(key) { return sortKey === key ? (sortDir === 1 ? " ▲" : " ▼") : ""; }
-    const nameTh = el("th", { text: `파일${sortArrow("name")}`, class: "sortable" });
-    const confTh = el("th", { text: `신뢰도${sortArrow("confidence")}`, class: "sortable" });
+    const nameTh = el("th", { text: t("files.nameHeader", { arrow: sortArrow("name") }), class: "sortable" });
+    const confTh = el("th", { text: t("files.confidenceHeader", { arrow: sortArrow("confidence") }), class: "sortable" });
     for (const [th, key] of [[nameTh, "name"], [confTh, "confidence"]]) {
       th.addEventListener("click", () => {
         sortDir = sortKey === key ? -sortDir : 1;
         sortKey = key;
-        nameTh.textContent = `파일${sortArrow("name")}`;
-        confTh.textContent = `신뢰도${sortArrow("confidence")}`;
+        nameTh.textContent = t("files.nameHeader", { arrow: sortArrow("name") });
+        confTh.textContent = t("files.confidenceHeader", { arrow: sortArrow("confidence") });
         draw();
       });
     }
     const table = el("table", {}, [
-      el("thead", {}, el("tr", {}, [nameTh, el("th", { text: "요약" }), confTh])),
+      el("thead", {}, el("tr", {}, [nameTh, el("th", { text: t("files.summaryHeader") }), confTh])),
       tbody,
     ]);
 
@@ -493,7 +519,7 @@ async function renderRelationships() {
         },
         selectedFile
       );
-      section.appendChild(el("button", { class: "secondary", text: "← 트리로 돌아가기", onclick: showTreeOverview }));
+      section.appendChild(el("button", { class: "secondary", text: t("pack.review.backToTree"), onclick: showTreeOverview }));
       section.appendChild(relEditor.el);
     }
 
@@ -501,8 +527,8 @@ async function renderRelationships() {
 
     app.innerHTML = "";
     app.appendChild(el("div", { class: "card" }, [
-      el("h1", { text: "파일 관계" }),
-      el("p", { class: "muted", text: "▶ 를 클릭해 하위 트리를 접거나 펼치세요. 수정하고 싶은 파일 이름을 클릭하면 편집 화면이 열립니다 -- 변경 사항은 즉시 aif.json에 저장됩니다." }),
+      el("h1", { text: t("pack.review.fileRelations") }),
+      el("p", { class: "muted", text: t("relationships.help") }),
       section, editError,
     ]));
   } catch (e) { showError(e); }
@@ -521,7 +547,7 @@ async function renderFileDetail(name, params) {
     const info = files[name] || {};
 
     function fileList(names) {
-      if (!names.length) return el("p", { class: "muted", text: "(없음)" });
+      if (!names.length) return el("p", { class: "muted", text: t("fileDetail.none") });
       return el("ul", { class: "file-list" }, names.map(n =>
         el("li", {}, el("a", { href: `#/files/${encodeURIComponent(n)}`, text: n }))
       ));
@@ -533,11 +559,11 @@ async function renderFileDetail(name, params) {
     app.appendChild(el("div", { class: "card" }, [
       el("h1", { text: name }),
       el("p", { text: info.summary || "" }),
-      el("h3", { text: "Dependents (이 파일에 의존하는 파일)" }), fileList(dependents),
-      el("h3", { text: "Blast radius (이 파일 변경 시 영향받는 전체 범위)" }), fileList(blastRadius),
+      el("h3", { text: t("fileDetail.dependents") }), fileList(dependents),
+      el("h3", { text: t("fileDetail.blastRadius") }), fileList(blastRadius),
       el("h3", { text: "Detail" }),
-      el("pre", { text: detail.compressed || "(내용 없음)" }),
-      el("div", { class: "copy-row" }, copyButton(fullText, "📋 전체 복사")),
+      el("pre", { text: detail.compressed || t("fileDetail.noContent") }),
+      el("div", { class: "copy-row" }, copyButton(fullText, t("fileDetail.copyAll"))),
     ]));
   } catch (e) { showError(e); }
 }
@@ -546,7 +572,7 @@ function renderSearch() {
   nav.classList.remove("hidden");
   app.innerHTML = "";
 
-  const patternInput = el("input", { type: "text", placeholder: "정규식 패턴 (예: TODO|FIXME)" });
+  const patternInput = el("input", { type: "text", placeholder: t("search.patternPlaceholder") });
   const ctxInput = el("input", { type: "text", value: "0", style: "width:60px" });
   const ignoreCaseInput = el("input", { type: "checkbox" });
   const results = el("div");
@@ -554,7 +580,7 @@ function renderSearch() {
   async function run() {
     const pattern = patternInput.value.trim();
     if (!pattern) return;
-    results.innerHTML = "검색 중...";
+    results.innerHTML = t("search.searching");
     try {
       const matches = await api("/api/search", {
         project_path: getProject(),
@@ -563,7 +589,7 @@ function renderSearch() {
         ignore_case: ignoreCaseInput.checked,
       });
       results.innerHTML = "";
-      if (!matches.length) { results.appendChild(el("p", { class: "muted", text: "검색 결과 없음" })); return; }
+      if (!matches.length) { results.appendChild(el("p", { class: "muted", text: t("search.noResults") })); return; }
       for (const m of matches) {
         const lines = [
           ...m.context_before.map(l => el("div", { class: "ctx-line", text: l })),
@@ -587,7 +613,7 @@ function renderSearch() {
     patternInput,
     el("label", { text: "context", style: "margin:0" }), ctxInput,
     el("label", { text: "ignore case", style: "margin:0;display:flex;align-items:center;gap:4px" }, ignoreCaseInput),
-    el("button", { text: "검색", onclick: run }),
+    el("button", { text: t("search.button"), onclick: run }),
   ]));
   app.appendChild(results);
 }

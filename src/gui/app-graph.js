@@ -126,7 +126,7 @@ function renderMiniGraph(name, parents, children, onSelect) {
     svg.appendChild(group);
   });
   if (extraParents > 0) {
-    svg.appendChild(svgEl("text", { class: "rel-graph-more", x: sideMargin, y: rowY(shownParents.length - 1) + rowH, text: `+${extraParents}개 더` }));
+    svg.appendChild(svgEl("text", { class: "rel-graph-more", x: sideMargin, y: rowY(shownParents.length - 1) + rowH, text: t("graph.more", { n: extraParents }) }));
   }
 
   shownChildren.forEach((c, i) => {
@@ -139,7 +139,7 @@ function renderMiniGraph(name, parents, children, onSelect) {
     svg.appendChild(group);
   });
   if (extraChildren > 0) {
-    svg.appendChild(svgEl("text", { class: "rel-graph-more", x: width - sideMargin, y: rowY(shownChildren.length - 1) + rowH, "text-anchor": "end", text: `+${extraChildren}개 더` }));
+    svg.appendChild(svgEl("text", { class: "rel-graph-more", x: width - sideMargin, y: rowY(shownChildren.length - 1) + rowH, "text-anchor": "end", text: t("graph.more", { n: extraChildren }) }));
   }
 
   svg.appendChild(svgEl("g", { class: "rel-node rel-node-center" }, [
@@ -194,7 +194,7 @@ function renderDependencyTreeOverview(tree, allFiles, flaggedFiles, onSelectFile
     const children = [];
     for (const dep of deps.internal) {
       if (ancestors.has(dep)) {
-        children.push(fileRow(dep, "(순환 참조 → 생략)"));
+        children.push(fileRow(dep, t("graph.tree.cycleSkipped")));
         continue;
       }
       children.push(buildNode(dep, new Set([...ancestors, dep])));
@@ -225,7 +225,7 @@ function renderDependencyTreeOverview(tree, allFiles, flaggedFiles, onSelectFile
   if (!roots.length && allFiles.length) roots = allFiles;
 
   for (const name of roots) box.appendChild(buildNode(name, new Set([name])));
-  if (!roots.length) box.appendChild(el("p", { class: "muted", text: "표시할 파일이 없습니다." }));
+  if (!roots.length) box.appendChild(el("p", { class: "muted", text: t("graph.tree.empty") }));
   return box;
 }
 
@@ -252,7 +252,7 @@ function renderRelationshipEditor(tree, allFiles, onLink, onUnlink, initialSelec
   let currentTree = tree;
   let selected = initialSelected && allFiles.includes(initialSelected) ? initialSelected : (allFiles[0] || null);
 
-  const searchInput = el("input", { type: "text", placeholder: "🔍 파일 검색..." });
+  const searchInput = el("input", { type: "text", placeholder: t("graph.editor.searchPlaceholder") });
   const listPane = el("div", { class: "rel-file-list" });
   const detailPane = el("div", { class: "rel-detail-pane" });
 
@@ -303,13 +303,13 @@ function renderRelationshipEditor(tree, allFiles, onLink, onUnlink, initialSelec
         el("span", { class: "rel-list-name", text: name }),
       ]));
     }
-    if (!shown) listPane.appendChild(el("p", { class: "muted", style: "padding:10px", text: "일치하는 파일 없음" }));
+    if (!shown) listPane.appendChild(el("p", { class: "muted", style: "padding:10px", text: t("graph.editor.noMatch") }));
   }
 
   function drawDetail() {
     detailPane.innerHTML = "";
     if (!selected) {
-      detailPane.appendChild(el("p", { class: "muted", text: "왼쪽에서 파일을 선택하세요." }));
+      detailPane.appendChild(el("p", { class: "muted", text: t("graph.editor.selectPrompt") }));
       return;
     }
     const name = selected;
@@ -325,7 +325,7 @@ function renderRelationshipEditor(tree, allFiles, onLink, onUnlink, initialSelec
 
     const edgeList = el("div", { class: "rel-edges" });
     for (const child of deps.internal) {
-      const unlinkButton = el("button", { class: "secondary", text: "끊기" });
+      const unlinkButton = el("button", { class: "secondary", text: t("graph.editor.unlink") });
       unlinkButton.addEventListener("click", () => onUnlink(name, child));
       edgeList.appendChild(el("div", { class: "rel-edge" }, [
         el("span", { text: `→ 📄 ${child}` }), unlinkButton,
@@ -335,19 +335,19 @@ function renderRelationshipEditor(tree, allFiles, onLink, onUnlink, initialSelec
       edgeList.appendChild(el("div", { class: "rel-edge muted" }, el("span", { text: `→ 📦 ${ext}` })));
     }
     if (!deps.internal.length && !deps.external.length) {
-      edgeList.appendChild(el("p", { class: "muted", text: "(이 파일이 의존하는 대상 없음)" }));
+      edgeList.appendChild(el("p", { class: "muted", text: t("graph.editor.noDependencies") }));
     }
     detailPane.appendChild(edgeList);
 
     if (parents.length) {
-      detailPane.appendChild(el("p", { class: "muted", text: `이 파일에 의존하는 파일 ${parents.length}개: ${parents.join(", ")}` }));
+      detailPane.appendChild(el("p", { class: "muted", text: t("graph.editor.dependentsOf", { n: parents.length, list: parents.join(", ") }) }));
     }
 
     const targetListId = "rel-target-options";
-    const targetInput = el("input", { type: "text", list: targetListId, placeholder: "🔍 연결할 파일 검색..." });
+    const targetInput = el("input", { type: "text", list: targetListId, placeholder: t("graph.editor.linkSearchPlaceholder") });
     const targetOptions = el("datalist", { id: targetListId },
       allFiles.filter(f => f !== name && !deps.internal.includes(f)).map(f => el("option", { value: f })));
-    const linkButton = el("button", { class: "secondary", text: "+ 연결 추가", onclick: () => {
+    const linkButton = el("button", { class: "secondary", text: t("graph.editor.addLink"), onclick: () => {
       const target = targetInput.value.trim();
       if (target && target !== name) onLink(name, target);
     } });
