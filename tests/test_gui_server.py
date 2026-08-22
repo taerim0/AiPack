@@ -2,11 +2,11 @@
 query_service.py calls and shape JSON responses -- not the underlying logic,
 which is already covered via query_service through test_mcp_server.py (same
 core, different transport) and test_relationship.py/test_search.py directly.
-Also checks static file serving (index.html/app.js/style.css) and the real
-behavior that lives in gui_server.py itself: turning get_detail's/
-search_project's ValueError, and a bad aif_path/project_path's OSError/
-JSONDecodeError, into clean JSON error responses instead of a 500; and
-_find_free_port()'s fallback when the requested port is already taken.
+Also checks static file serving (index.html, the app-*.js frontend split,
+style.css) and the real behavior that lives in gui_server.py itself: turning
+get_detail's/search_project's ValueError, and a bad aif_path/project_path's
+OSError/JSONDecodeError, into clean JSON error responses instead of a 500;
+and _find_free_port()'s fallback when the requested port is already taken.
 """
 
 import json
@@ -53,11 +53,15 @@ def _write_sample_aif(tmp_path):
 def test_index_serves_static_shell(client):
     res = client.get("/")
     assert res.status_code == 200
-    assert b"app.js" in res.data
+    assert b"app-router.js" in res.data
 
 
 def test_static_assets_are_served(client):
-    assert client.get("/app.js").status_code == 200
+    # app.js used to be one file; split into app-core/-graph/-pack/-pages/
+    # -router.js (see src/gui/CLAUDE.md's Frontend section) -- index.html
+    # loads all five in that order, each has to actually be servable.
+    for name in ["app-core.js", "app-graph.js", "app-pack.js", "app-pages.js", "app-router.js"]:
+        assert client.get(f"/{name}").status_code == 200, name
     assert client.get("/style.css").status_code == 200
 
 

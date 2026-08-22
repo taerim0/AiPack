@@ -11,3 +11,9 @@ checkpoint/
 
 venv/
 
+# Claude Code's own tool-internal state -- worktrees created via the Agent
+# tool's isolation:"worktree" option, and skill exports (this repo's own
+# testfiles/-generated ones aren't meant to be committed here; a real
+# target project choosing to commit its own is a separate decision).
+.claude/worktrees/
+.claude/skills/

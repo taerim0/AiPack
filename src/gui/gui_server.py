@@ -26,13 +26,13 @@ underneath (`app`) also works standalone via `flask run` or a bare
 `app.run()` for anyone who'd rather use their own browser (or during
 development, where webview's window can make debugging fiddlier than a
 normal browser tab). That decoupling has one real cost: main()'s windowed
-branch exposes a `_Api` bridge (js_api=...) so app.js's path fields --
+branch exposes a `_Api` bridge (js_api=...) so the frontend's path fields --
 project folder, aif.json, pack output -- get a real OS file/folder-picker
 dialog instead of requiring a typed path. pywebview injects that bridge as
 `window.pywebview.api` only in the native window, so it's simply absent in
-`--no-window`/bare-`flask run` mode, and app.js's picker buttons (see
-hasApi()) fall back to asking for a typed path there rather than assuming
-the bridge exists.
+`--no-window`/bare-`flask run` mode, and the frontend's picker buttons (see
+app-core.js's hasApi()) fall back to asking for a typed path there rather
+than assuming the bridge exists.
 
 Binds to 127.0.0.1 only -- there is no --host flag, on purpose. Exposing
 this to the network would open local project data (including original
@@ -67,13 +67,14 @@ from gui import pack_service
 import query_service
 from file.relationship import CycleError
 
-# static_folder="." -- not "gui" -- since index.html/app.js/style.css are
-# this file's own siblings now that gui_server.py itself lives in src/gui/.
+# static_folder="." -- not "gui" -- since index.html/the app-*.js files/
+# style.css are this file's own siblings now that gui_server.py itself
+# lives in src/gui/.
 app = Flask(__name__, static_folder=".", static_url_path="")
 
 # Filled in from CLI args at startup (see main()); read by GET /api/config
 # so the frontend can prefill the landing page without a templating layer --
-# index.html/app.js stay plain static files this way.
+# index.html/the app-*.js files stay plain static files this way.
 _default_config = {"aif_path": None, "project_path": None}
 
 
@@ -82,8 +83,9 @@ _default_config = {"aif_path": None, "project_path": None}
 # likely failure mode this GUI has. Only /api/detail and /api/search had
 # their own try/except (for get_detail's/search_project's ValueError);
 # without these two handlers, a bad path anywhere else fell through as
-# Flask's default 500 HTML page, which api()'s error message in app.js can't
-# extract anything useful from ("요청 실패 (500)" with no reason). Registered
+# Flask's default 500 HTML page, which app-core.js's api() error-message
+# handling can't extract anything useful from ("요청 실패 (500)" with no
+# reason). Registered
 # once here instead of adding try/except to every route.
 @app.errorhandler(OSError)
 def handle_os_error(e):
@@ -360,12 +362,12 @@ _JSON_FILE_TYPES = ("JSON 파일 (*.json)", "모든 파일 (*.*)")
 
 class _Api:
     """Exposed to the frontend as window.pywebview.api once the main window
-    is created with js_api=... (see main()) -- lets app.js open a real OS
-    file/folder-picker dialog instead of requiring a human to type a path
+    is created with js_api=... (see main()) -- lets the frontend open a real
+    OS file/folder-picker dialog instead of requiring a human to type a path
     by hand, for every path field the landing page has. Only available in
     the default windowed mode: --no-window opens a plain browser tab with
-    no pywebview bridge, so app.js falls back to manual entry there (see
-    its hasApi()).
+    no pywebview bridge, so the frontend falls back to manual entry there
+    (see app-core.js's hasApi()).
 
     Defined at module level (not nested inside main(), where it used to
     live) even though `webview` itself is only ever imported lazily inside
@@ -411,7 +413,7 @@ class _Api:
 def _confirm_close_if_reviewing(window) -> bool | None:
     """Registered on window.events.closing (see the pywebview source: a
     handler returning False cancels the close, anything else lets it
-    proceed). app.js's beforeunload guard protects an in-page reload/
+    proceed). app-pack.js's beforeunload guard protects an in-page reload/
     navigation during a pack review, but clicking this native window's own
     close button bypasses the DOM entirely -- pywebview tears the webview
     down directly rather than navigating it away, so beforeunload never
