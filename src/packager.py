@@ -30,6 +30,34 @@ STRUCTURAL_ONLY_NOTE = (
 )
 
 
+def _confirm_regenerate_failed_summaries(failed_names: list[str], interactive: bool) -> bool:
+    """Asks whether to drop the cached failure placeholder
+    (summarizer.SUMMARY_FAILED_PLACEHOLDER) for `failed_names` so this run
+    retries them for real, instead of load_previous_summaries() silently
+    carrying the same "요약 생성 실패" text forward pack after pack until
+    the file's content itself happens to change.
+
+    Same shape as checkpoint.resume_checkpoint_choice() -- a numbered
+    menu, non-interactive callers get a safe default with no prompt.
+    Defaults to leaving them cached (not regenerating): a repeated LLM
+    failure isn't retried automatically anywhere else in the pipeline
+    either (see generate_summaries()'s own docstring -- review is what's
+    supposed to catch it, not a silent retry loop), and confidence.py
+    already forces these to 0.0 so a human reviewing the pack sees them
+    flagged regardless of which way this defaults.
+    """
+    if not interactive:
+        return False
+
+    print(f"\n  ⚠️  이전 pack에서 요약 생성에 실패한 파일 {len(failed_names)}개가 캐시에 있습니다:")
+    for name in failed_names:
+        print(f"      - {name}")
+    print("  [1] 다시 생성 시도")
+    print("  [2] 그대로 둠 (검토 단계에서 확인)")
+    choice = input("  선택: ").strip()
+    return choice == "1"
+
+
 def pack(
     root_path: str,
     auto: bool = False,
@@ -100,7 +128,11 @@ def pack(
     still applies independently -- a file whose previous *real* summary is
     still fresh gets that reused rather than downgraded to a structural
     placeholder, since reusing a better answer already on hand is strictly
-    an improvement, not a contradiction of "don't call the LLM now."
+    an improvement, not a contradiction of "don't call the LLM now." One
+    exception: a reused summary that's exactly summarizer's failure
+    placeholder never got a real answer in the first place, so it isn't
+    "reuse" so much as re-caching a miss -- see
+    _confirm_regenerate_failed_summaries() below.
     """
     root = Path(root_path)
 
@@ -147,6 +179,14 @@ def pack(
     previous_summaries = load_previous_summaries(root_path, selected, RESULT_DIR) if use_cache else {}
     if previous_summaries:
         print(f"  ♻️  이전 pack에서 변경 없는 파일 {len(previous_summaries)}개 발견 — 요약 재사용")
+
+        failed_previously = [
+            name for name, summary in previous_summaries.items()
+            if summary == summarizer.SUMMARY_FAILED_PLACEHOLDER
+        ]
+        if failed_previously and _confirm_regenerate_failed_summaries(failed_previously, interactive):
+            for name in failed_previously:
+                del previous_summaries[name]
 
     # 4. Tree-sitter analysis
     print("\n🔍 코드 구조 분석 중...")

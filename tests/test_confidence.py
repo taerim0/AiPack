@@ -1,4 +1,5 @@
 from confidence import estimate_confidence, confidence_level, triage, REVIEW_THRESHOLD
+from summarizer import SUMMARY_FAILED_PLACEHOLDER
 
 
 def test_estimate_confidence_high_when_summary_uses_signature_words():
@@ -33,6 +34,15 @@ def test_estimate_confidence_low_when_summary_is_unrelated():
 def test_estimate_confidence_defaults_to_high_with_no_signatures():
     # nothing to contradict -- e.g. README.md, mods.toml, other text-only files
     assert estimate_confidence("anything at all", []) == 1.0
+
+
+def test_estimate_confidence_zero_for_failure_placeholder_even_with_no_signatures():
+    # found via a real Gemini pack: a thin index.ts (top-level imports + one
+    # bare call, no declared functions) has no signatures, so a failed
+    # summary would otherwise fall into the "nothing to contradict" 1.0
+    # shortcut above and never reach correct_aif()'s review -- exactly the
+    # one case that fallback text needs to be caught, not skipped
+    assert estimate_confidence(SUMMARY_FAILED_PLACEHOLDER, []) == 0.0
 
 
 def test_estimate_confidence_full_credit_capped_at_three_matches():
