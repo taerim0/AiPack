@@ -60,10 +60,11 @@ def test_index_serves_static_shell(client):
 
 
 def test_static_assets_are_served(client):
-    # app.js used to be one file; split into app-core/-graph/-pack/-pages/
-    # -router.js (see src/gui/CLAUDE.md's Frontend section) -- index.html
-    # loads all five in that order, each has to actually be servable.
-    for name in ["app-core.js", "app-graph.js", "app-pack.js", "app-pages.js", "app-router.js"]:
+    # app.js used to be one file; split into app-i18n/-core/-graph/-pack/
+    # -pages/-router.js (see src/gui/CLAUDE.md's Frontend section) --
+    # index.html loads all six in that order, each has to actually be
+    # servable.
+    for name in ["app-i18n.js", "app-core.js", "app-graph.js", "app-pack.js", "app-pages.js", "app-router.js"]:
         assert client.get(f"/{name}").status_code == 200, name
     assert client.get("/style.css").status_code == 200
 

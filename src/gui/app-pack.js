@@ -9,7 +9,7 @@ async function renderPackJob(jobId) {
   app.innerHTML = "";
 
   const logPre = el("pre", { class: "pack-log" });
-  const statusBadge = el("span", { class: "pack-status running", text: "진행 중..." });
+  const statusBadge = el("span", { class: "pack-status running", text: t("pack.status.running") });
   const body = el("div");
 
   // "running" used to have no controls at all -- once a pack started, the
@@ -19,8 +19,8 @@ async function renderPackJob(jobId) {
   // same project auto-resumes from it, same as a failed one already would),
   // "그냥 취소" discards it. Hidden once the job leaves "running" (see
   // poll() below) -- nothing left running to stop by then.
-  const stopSaveButton = el("button", { class: "secondary", text: "저장 후 취소" });
-  const stopDiscardButton = el("button", { class: "secondary", text: "그냥 취소" });
+  const stopSaveButton = el("button", { class: "secondary", text: t("pack.stopSave") });
+  const stopDiscardButton = el("button", { class: "secondary", text: t("pack.stopDiscard") });
   const stopRow = el("div", { class: "copy-row" }, [stopSaveButton, stopDiscardButton]);
 
   async function requestStop(save) {
@@ -35,17 +35,17 @@ async function renderPackJob(jobId) {
     }
   }
   stopSaveButton.addEventListener("click", () => {
-    if (confirm("지금까지 진행 상황을 저장하고 중단할까요? 다음에 같은 프로젝트를 pack하면 이어서 진행됩니다.")) requestStop(true);
+    if (confirm(t("pack.confirmStopSave"))) requestStop(true);
   });
   stopDiscardButton.addEventListener("click", () => {
-    if (confirm("저장하지 않고 중단할까요? 지금까지 진행 상황이 모두 사라집니다.")) requestStop(false);
+    if (confirm(t("pack.confirmStopDiscard"))) requestStop(false);
   });
 
   const card = el("div", { class: "card" }, [
-    el("h1", { text: "패킹 진행 상황" }),
+    el("h1", { text: t("pack.title") }),
     statusBadge,
     stopRow,
-    el("h3", { text: "로그" }),
+    el("h3", { text: t("pack.log") }),
     logPre,
     body,
   ]);
@@ -53,17 +53,17 @@ async function renderPackJob(jobId) {
 
   function showErrorState(message) {
     statusBadge.className = "pack-status error";
-    statusBadge.textContent = "오류";
+    statusBadge.textContent = t("pack.status.error");
     body.appendChild(el("div", { class: "error", text: message }));
   }
 
   function showDoneState(result) {
     statusBadge.className = "pack-status done";
-    statusBadge.textContent = "완료";
+    statusBadge.textContent = t("pack.status.done");
     const openIt = () => openProject(result.aif_path, result.project_path);
     body.appendChild(el("div", { class: "copy-row" }, [
-      el("p", { text: `저장됨: ${result.aif_path}` }),
-      el("button", { text: "결과 열기", onclick: openIt }),
+      el("p", { text: t("pack.saved", { path: result.aif_path }) }),
+      el("button", { text: t("pack.openResult"), onclick: openIt }),
     ]));
   }
 
@@ -85,7 +85,7 @@ async function renderPackJob(jobId) {
 
     if (flagged && entry.signatures && entry.signatures.length) {
       const sigItems = entry.signatures.map(s => el("li", { text: s }));
-      if (entry.signatures_more) sigItems.push(el("li", { class: "muted", text: `+ ${entry.signatures_more}개 더` }));
+      if (entry.signatures_more) sigItems.push(el("li", { class: "muted", text: t("pack.review.moreSignatures", { n: entry.signatures_more }) }));
       children.push(el("ul", { class: "file-list" }, sigItems));
     }
     return el("div", { class: `file-edit-row${flagged ? " needs-review" : ""}` }, children);
@@ -93,7 +93,7 @@ async function renderPackJob(jobId) {
 
   async function showReviewState() {
     statusBadge.className = "pack-status reviewing";
-    statusBadge.textContent = "검토 대기 중";
+    statusBadge.textContent = t("pack.status.reviewing");
 
     let review;
     try {
@@ -125,14 +125,14 @@ async function renderPackJob(jobId) {
       rules.forEach((rule, i) => {
         rulesList.appendChild(el("li", {}, [
           el("span", { text: rule }),
-          el("button", { class: "secondary", text: "삭제", onclick: () => { rules.splice(i, 1); drawRules(); } }),
+          el("button", { class: "secondary", text: t("pack.review.deleteRule"), onclick: () => { rules.splice(i, 1); drawRules(); } }),
         ]));
       });
     }
     drawRules();
 
-    const newRuleInput = el("input", { type: "text", placeholder: "새 룰 추가" });
-    const addRuleButton = el("button", { class: "secondary", text: "추가", onclick: () => {
+    const newRuleInput = el("input", { type: "text", placeholder: t("pack.review.newRulePlaceholder") });
+    const addRuleButton = el("button", { class: "secondary", text: t("pack.review.addRule"), onclick: () => {
       const rule = newRuleInput.value.trim();
       if (rule) { rules.push(rule); newRuleInput.value = ""; drawRules(); }
     } });
@@ -186,7 +186,7 @@ async function renderPackJob(jobId) {
         },
         selectedFile
       );
-      relSection.appendChild(el("button", { class: "secondary", text: "← 트리로 돌아가기", onclick: showTreeOverview }));
+      relSection.appendChild(el("button", { class: "secondary", text: t("pack.review.backToTree"), onclick: showTreeOverview }));
       relSection.appendChild(relEditor.el);
     }
 
@@ -195,12 +195,12 @@ async function renderPackJob(jobId) {
     const summaryInputs = {};
     const needsReviewBox = el("div", {}, review.needs_review.length
       ? review.needs_review.map(entry => fileEditor(entry, true, summaryInputs))
-      : [el("p", { class: "muted", text: "검토가 필요한 낮은 신뢰도 요약이 없습니다." })]);
+      : [el("p", { class: "muted", text: t("pack.review.noNeedsReview") })]);
     const autoKeptBox = el("div", {}, review.auto_kept.map(entry => fileEditor(entry, false, summaryInputs)));
 
     const submitError = el("div", { class: "error hidden" });
-    const submitButton = el("button", { text: "완료 및 저장" });
-    const cancelButton = el("button", { class: "secondary", text: "취소" });
+    const submitButton = el("button", { text: t("pack.review.submit") });
+    const cancelButton = el("button", { class: "secondary", text: t("pack.review.cancel") });
 
     submitButton.addEventListener("click", async () => {
       submitError.classList.add("hidden");
@@ -232,7 +232,7 @@ async function renderPackJob(jobId) {
       // (name/guide/rules/summaries -- see the beforeUnload comment above)
       // with no undo, so it gets the same one-step confirmation any
       // destructive action should have rather than firing on a single click.
-      if (!confirm("검토 중인 내용을 취소하고 버릴까요? 저장되지 않은 편집 내용이 모두 사라집니다.")) return;
+      if (!confirm(t("pack.review.confirmCancel"))) return;
       // Disable both, not just this one -- otherwise a click here followed
       // fast enough by a click on "완료 및 저장" (still enabled) fires both
       // requests before either response comes back.
@@ -244,15 +244,15 @@ async function renderPackJob(jobId) {
     });
 
     body.appendChild(el("div", {}, [
-      el("h3", { text: "프로젝트 이름" }), nameInput,
-      el("h3", { text: "AI 가이드" }), promptInput,
-      el("h3", { text: "코딩 룰" }), rulesList,
+      el("h3", { text: t("pack.review.projectName") }), nameInput,
+      el("h3", { text: t("pack.review.aiGuide") }), promptInput,
+      el("h3", { text: t("pack.review.codingRules") }), rulesList,
       el("div", { class: "toolbar" }, [newRuleInput, addRuleButton]),
-      el("h3", { text: "파일 관계" }),
-      el("p", { class: "muted", text: "전체 의존성 트리입니다 (▶ 를 클릭해 하위 트리를 접거나 펼치세요). 수정하고 싶은 파일 이름을 클릭하면 그 파일의 관계 편집 화면이 열립니다 -- 그래프의 다른 파일 노드를 클릭해 이동하거나, \"끊기\"로 의존성을 제거하거나, 검색창에 파일명을 입력해 새 의존성을 추가할 수 있습니다. 외부 패키지(📦)는 읽기 전용입니다." }),
+      el("h3", { text: t("pack.review.fileRelations") }),
+      el("p", { class: "muted", text: t("pack.review.relationsHelp") }),
       relSection, treeError,
-      el("h3", { text: `⚠️ 검토 필요 (${review.needs_review.length}개)` }), needsReviewBox,
-      el("h3", { text: `자동 승인됨 (${review.auto_kept.length}개, 필요 시 수정 가능)` }), autoKeptBox,
+      el("h3", { text: t("pack.review.needsReviewHeader", { n: review.needs_review.length }) }), needsReviewBox,
+      el("h3", { text: t("pack.review.autoKeptHeader", { n: review.auto_kept.length }) }), autoKeptBox,
       el("div", { class: "copy-row" }, [submitButton, cancelButton]),
       submitError,
     ]));
@@ -295,7 +295,7 @@ async function renderPackJob(jobId) {
     stopped = true;
     if (data.state === "reviewing") return showReviewState();
     if (data.state === "done") return showDoneState(data.result);
-    return showErrorState(data.error || "알 수 없는 오류");
+    return showErrorState(data.error || t("pack.unknownError"));
   }
   poll();
 }

@@ -1,13 +1,15 @@
 // Ziplex GUI frontend, split into a few plain <script> files loaded in
-// order by index.html (app-core.js -> app-graph.js -> app-pack.js ->
-// app-pages.js -> app-router.js) -- no build step, no bundler, no ES
-// modules, so every function here is a plain global shared across all of
-// them, the same as when this all lived in one 1250-line app.js. Load
-// order only matters for the bootstrap at the bottom of app-router.js
-// (the one place anything actually *runs* at top level, via
+// order by index.html (app-i18n.js -> app-core.js -> app-graph.js ->
+// app-pack.js -> app-pages.js -> app-router.js) -- no build step, no
+// bundler, no ES modules, so every function here is a plain global shared
+// across all of them, the same as when this all lived in one 1250-line
+// app.js. Load order only matters for the bootstrap at the bottom of
+// app-router.js (the one place anything actually *runs* at top level, via
 // DOMContentLoaded/hashchange) -- every other file is just function/const
-// declarations, safe to load in any relative order as long as this one
-// (the lowest-level shared helpers) comes first.
+// declarations, safe to load in any relative order as long as app-i18n.js
+// (t()/getLang(), which this file's own strings already call) comes
+// before this one, and this one (the next-lowest-level shared helpers)
+// comes before the rest.
 //
 // This file: localStorage-backed state (aif_path/project_path/recent-
 // projects list), the api()/apiPost() fetch wrappers, the el()/svgEl()-
@@ -67,11 +69,11 @@ function openProject(aif, project) {
 
 function relativeTime(ms) {
   const mins = Math.round((Date.now() - ms) / 60000);
-  if (mins < 1) return "방금";
-  if (mins < 60) return `${mins}분 전`;
+  if (mins < 1) return t("core.time.justNow");
+  if (mins < 60) return t("core.time.minutesAgo", { mins });
   const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}시간 전`;
-  return `${Math.round(hours / 24)}일 전`;
+  if (hours < 24) return t("core.time.hoursAgo", { hours });
+  return t("core.time.daysAgo", { days: Math.round(hours / 24) });
 }
 
 async function api(path, params = {}) {
@@ -81,7 +83,7 @@ async function api(path, params = {}) {
   }
   const res = await fetch(url);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `요청 실패 (${res.status})`);
+  if (!res.ok) throw new Error(data.error || t("core.requestFailed", { status: res.status }));
   return data;
 }
 
@@ -92,7 +94,7 @@ async function apiPost(path, body = {}) {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `요청 실패 (${res.status})`);
+  if (!res.ok) throw new Error(data.error || t("core.requestFailed", { status: res.status }));
   return data;
 }
 
@@ -108,11 +110,11 @@ function el(tag, attrs = {}, children = []) {
   return node;
 }
 
-function copyButton(getText, label = "📋 복사") {
+function copyButton(getText, label = t("core.copy")) {
   const btn = el("button", { class: "secondary", text: label });
   btn.addEventListener("click", async () => {
     await navigator.clipboard.writeText(getText());
-    btn.textContent = "복사됨 ✓";
+    btn.textContent = t("core.copied");
     setTimeout(() => (btn.textContent = label), 1200);
   });
   return btn;
@@ -131,7 +133,7 @@ function showError(err) {
 // just factored out so every page-level fetch gets it, not just search.
 function showLoading() {
   app.innerHTML = "";
-  app.appendChild(el("p", { class: "muted loading", text: "불러오는 중..." }));
+  app.appendChild(el("p", { class: "muted loading", text: t("core.loading") }));
 }
 
 // pywebview injects window.pywebview.api once the native window is created
@@ -158,23 +160,21 @@ function pickerButton(targetInput, apiMethod, label, unavailableMessage) {
   return btn;
 }
 
-const PICKER_UNAVAILABLE = "선택 대화상자는 기본 실행 모드(네이티브 창)에서만 사용할 수 있습니다. --no-window로 실행 중이면 경로를 직접 입력해주세요.";
-
 function browseButton(targetInput) {
-  return pickerButton(targetInput, "choose_folder", "📁 찾아보기", PICKER_UNAVAILABLE);
+  return pickerButton(targetInput, "choose_folder", t("core.picker.browseFolder"), t("core.picker.unavailable"));
 }
 
 // aif.json 경로: an existing file to open, so this is an OPEN dialog
 // (see gui_server.py's choose_aif_file), filtered to .json.
 function browseAifButton(targetInput) {
-  return pickerButton(targetInput, "choose_aif_file", "📄 찾아보기", PICKER_UNAVAILABLE);
+  return pickerButton(targetInput, "choose_aif_file", t("core.picker.browseFile"), t("core.picker.unavailable"));
 }
 
 // 출력 경로: a file that doesn't necessarily exist yet -- pack's own
 // save_aif() will create it -- so this is a SAVE dialog, not OPEN
 // (see gui_server.py's choose_save_file).
 function browseSaveButton(targetInput) {
-  return pickerButton(targetInput, "choose_save_file", "📄 찾아보기", PICKER_UNAVAILABLE);
+  return pickerButton(targetInput, "choose_save_file", t("core.picker.browseFile"), t("core.picker.unavailable"));
 }
 
 function confidenceLevel(conf) {
@@ -184,10 +184,10 @@ function confidenceLevel(conf) {
 function setStale(stale) {
   if (stale && stale.is_stale) {
     const parts = [];
-    if (stale.changed?.length) parts.push(`변경 ${stale.changed.length}`);
-    if (stale.added?.length) parts.push(`추가 ${stale.added.length}`);
-    if (stale.removed?.length) parts.push(`삭제 ${stale.removed.length}`);
-    staleBadge.title = parts.join(", ") || "변경 감지됨";
+    if (stale.changed?.length) parts.push(t("core.stale.changed", { n: stale.changed.length }));
+    if (stale.added?.length) parts.push(t("core.stale.added", { n: stale.added.length }));
+    if (stale.removed?.length) parts.push(t("core.stale.removed", { n: stale.removed.length }));
+    staleBadge.title = parts.join(", ") || t("core.stale.detected");
     staleBadge.classList.remove("hidden");
   } else {
     staleBadge.classList.add("hidden");

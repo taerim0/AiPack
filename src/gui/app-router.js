@@ -4,7 +4,8 @@
 // listeners at the bottom are the only top-level code in this whole
 // split that actually *runs* immediately rather than just declaring a
 // function -- by the time either one can fire, every other script has
-// already finished executing and every render* function it calls exists.
+// already finished executing and every render*/applyStaticI18n function
+// it calls exists.
 // ---- router -----------------------------------------------------------
 
 function route() {
@@ -51,4 +52,7 @@ function route() {
 }
 
 window.addEventListener("hashchange", route);
-window.addEventListener("DOMContentLoaded", route);
+window.addEventListener("DOMContentLoaded", () => {
+  applyStaticI18n(); // index.html's own static topbar/sidebar labels (app-i18n.js) -- route() below never touches them
+  route();
+});
