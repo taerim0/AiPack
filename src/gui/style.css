@@ -18,23 +18,63 @@ body {
   font-family: -apple-system, "Segoe UI", Pretendard, sans-serif;
 }
 
-.nav {
+/* Sidebar, not a top hyperlink bar -- a local desktop program's own window
+   chrome (a settings/utility app's nav) reads as "runs on your machine"
+   more than a SaaS dashboard's top bar does, matching what this GUI
+   actually is: single-user, 127.0.0.1-only, launched as a native pywebview
+   window by default. `id="nav"` stays (every render*() call still does
+   nav.classList.add/remove("hidden") to show/hide the whole thing) even
+   though the CSS class is now "sidebar", not "nav". */
+.shell {
   display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 10px 20px;
+  align-items: stretch;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 18px 0;
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   position: sticky;
   top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  overflow-y: auto;
 }
-.nav .brand { font-weight: 600; margin-right: 12px; }
-.nav a { color: var(--text); text-decoration: none; opacity: 0.85; }
-.nav a:hover { opacity: 1; color: var(--accent); }
-.nav .change-project { margin-left: auto; opacity: 0.6; font-size: 0.9em; }
-.nav.hidden { display: none; }
+.sidebar-brand { font-weight: 600; padding: 0 20px 16px; }
+.sidebar a {
+  display: block;
+  padding: 9px 20px;
+  color: var(--text);
+  text-decoration: none;
+  opacity: 0.8;
+  border-left: 3px solid transparent;
+}
+.sidebar a:hover { opacity: 1; background: rgba(255, 255, 255, 0.04); }
+.sidebar a.active {
+  opacity: 1;
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: rgba(110, 168, 254, 0.1);
+}
+.sidebar .change-project {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  opacity: 0.6;
+  font-size: 0.9em;
+}
+.sidebar.hidden { display: none; }
 
 .stale-badge {
+  display: block;
+  width: fit-content;
+  margin: 4px 20px 8px;
   background: var(--danger);
   color: #241a0a;
   padding: 2px 8px;
@@ -43,7 +83,12 @@ body {
 }
 .stale-badge.hidden { display: none; }
 
-main { padding: 24px; max-width: 1000px; margin: 0 auto; }
+main { padding: 24px 32px; max-width: 1000px; flex: 1; min-width: 0; }
+/* Sidebar hidden (landing page, the pack job/review flow) -- main is the
+   shell's only child then, so go back to plain centered-block behavior
+   (width:100% + margin:auto) instead of flex-filling the row flush left,
+   matching how the landing page centered itself before the sidebar existed. */
+.sidebar.hidden + main { flex: none; width: 100%; margin: 0 auto; }
 
 h1, h2, h3 { font-weight: 600; }
 h1 { font-size: 1.4em; }
