@@ -387,4 +387,13 @@ def main():
         print('   예시: {"include": ["src/**/*.py"], "ignore": ["**/*.generated.*"]}')
 
 if __name__ == "__main__":
+    # Windows consoles default to the system locale's codepage (e.g. cp949 on
+    # Korean Windows), not UTF-8 -- printing an emoji then raises
+    # UnicodeEncodeError before pack() gets anywhere. Force UTF-8 on real
+    # process stdout/stderr; guarded with hasattr since a piped/captured
+    # stream (tests, some CI runners) may not support reconfigure() at all.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     main()
