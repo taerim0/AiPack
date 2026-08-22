@@ -546,3 +546,100 @@ def test_pack_use_cache_false_resummarizes_everything(tmp_path, monkeypatch):
 
     # 1 batch call + rules + prompt = 3, same as an unseen project -- nothing reused
     assert provider.calls == 3
+
+
+def test_pack_check_cancelled_discard_stops_with_no_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    aif = packager.pack(str(project), auto=True, interactive=False, check_cancelled=lambda: "discard")
+
+    assert aif == {}
+    assert not (tmp_path / "checkpoint" / "project.json").exists()
+
+
+def test_pack_check_cancelled_save_writes_a_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    aif = packager.pack(str(project), auto=True, interactive=False, check_cancelled=lambda: "save")
+
+    assert aif == {}
+    assert (tmp_path / "checkpoint" / "project.json").exists()
+
+
+def test_pack_check_cancelled_none_never_stops(tmp_path, monkeypatch):
+    # a callback that always says "keep going" behaves identically to not
+    # passing one at all
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    aif = packager.pack(str(project), auto=True, interactive=False, check_cancelled=lambda: None)
+
+    assert set(aif["files"].keys()) == {"main.py"}
+
+
+def test_pack_check_cancelled_save_checkpoints_only_progress_made_so_far(tmp_path, monkeypatch):
+    # Cancels on the *second* checkpoint call, not the first -- proves the
+    # checkpoint reflects real partial progress (one file's worth of
+    # extraction already done), not just an immediately-empty snapshot.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "a.py", "def a():\n    pass\n")
+    _write(project / "b.py", "def b():\n    pass\n")
+
+    calls = {"n": 0}
+
+    def check_cancelled():
+        calls["n"] += 1
+        return "save" if calls["n"] == 2 else None
+
+    aif = packager.pack(str(project), auto=True, interactive=False, check_cancelled=check_cancelled)
+
+    assert aif == {}
+    saved = json.loads((tmp_path / "checkpoint" / "project.json").read_text(encoding="utf-8"))
+    assert len(saved["files_data"]) == 1  # the first file's checkpoint-check passed; stopped before the second
+
+
+def test_pack_check_cancelled_save_preserves_rules_restored_from_a_prior_checkpoint(tmp_path, monkeypatch):
+    # Regression: a run resumed from a checkpoint that already had `rules`/
+    # `prompt` (restored_rules/restored_prompt, unpacked before the file
+    # loop) used to lose them the moment the user cancelled-and-saved again
+    # before rules were ever regenerated -- _maybe_stop()'s call sites in the
+    # per-file loop and the two checkpoints after it didn't pass
+    # restored_rules/restored_prompt through, so build_snapshot() baked in
+    # its own rules=None/prompt="" defaults instead, silently discarding
+    # already-known-good rules a second cancel-and-save would otherwise have
+    # kept.
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    checkpoint.save_checkpoint(
+        str(project),
+        {"project": {"name": "project", "prompt": "restored prompt"}, "rules": ["Rule A"], "files_data": {}},
+    )
+
+    # interactive=False auto-resumes the checkpoint found above; cancelling
+    # on the very first call (inside the per-file loop, before any file is
+    # processed) exercises the earliest of the three _maybe_stop() call
+    # sites that need restored_rules/restored_prompt passed through.
+    aif = packager.pack(str(project), auto=True, interactive=False, check_cancelled=lambda: "save")
+
+    assert aif == {}
+    saved = json.loads((tmp_path / "checkpoint" / "project.json").read_text(encoding="utf-8"))
+    assert saved["rules"] == ["Rule A"]
+    assert saved["project"]["prompt"] == "restored prompt"

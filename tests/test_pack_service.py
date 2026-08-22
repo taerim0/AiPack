@@ -725,3 +725,84 @@ def test_link_saved_relationship_is_safe_under_concurrent_writes(tmp_path):
         assert sorted(saved["relationships"]["a.py"]["internal"]) == ["b.py", "c.py"], (
             f"round {round_num}: lost an update -- {saved['relationships']['a.py']}"
         )
+
+
+def test_request_cancel_unknown_job_returns_false():
+    assert pack_service.request_cancel("no-such-job", save=True) is False
+
+
+def test_request_cancel_returns_false_for_a_reviewing_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "_provider", llm.MockProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    job_id = pack_service.start_pack_job(str(project), selected_files=["main.py"])
+    _wait(job_id)  # now "reviewing" -- nothing left running to stop
+
+    assert pack_service.request_cancel(job_id, save=True) is False
+
+
+class _BlockingProvider(llm.MockProvider):
+    """Blocks generate() until the test releases it -- MockProvider alone
+    answers instantly, so a real pack job would reach "reviewing" before a
+    test could ever call request_cancel() while it's genuinely still
+    "running". `started` is set the moment generate() is actually entered,
+    so the test can wait for that instead of guessing with a sleep loop.
+    """
+
+    def __init__(self, started: threading.Event, release: threading.Event):
+        self.started = started
+        self.release = release
+
+    def generate(self, prompt: str, retry: int = 5) -> str:
+        self.started.set()
+        self.release.wait(timeout=5)
+        return super().generate(prompt, retry)
+
+
+def test_request_cancel_save_stops_a_running_job_and_checkpoints_it(tmp_path, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(llm, "_provider", _BlockingProvider(started, release))
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    job_id = pack_service.start_pack_job(str(project), selected_files=["main.py"])
+    assert started.wait(timeout=5), "generate() was never entered"
+    assert pack_service.get_job_status(job_id)["state"] == "running"
+
+    assert pack_service.request_cancel(job_id, save=True) is True
+
+    # Lets the blocked summary call finish -- pack()'s third checkpoint
+    # (right after the summary step) is what actually consumes the cancel
+    # request and stops it, before rules/prompt would call generate() again.
+    release.set()
+    status = _wait(job_id)
+
+    assert status["state"] == "error"
+    assert "체크포인트에 저장됨" in status["error"]
+    assert (tmp_path / "checkpoint" / "project.json").exists()
+
+
+def test_request_cancel_discard_stops_a_running_job_without_a_checkpoint(tmp_path, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(llm, "_provider", _BlockingProvider(started, release))
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    _write(project / "main.py", "def add(a, b):\n    return a + b\n")
+
+    job_id = pack_service.start_pack_job(str(project), selected_files=["main.py"])
+    assert started.wait(timeout=5), "generate() was never entered"
+
+    assert pack_service.request_cancel(job_id, save=False) is True
+
+    release.set()
+    status = _wait(job_id)
+
+    assert status["state"] == "error"
+    assert "저장하지 않음" in status["error"]
+    assert not (tmp_path / "checkpoint" / "project.json").exists()
