@@ -418,6 +418,17 @@ def _find_free_port(preferred: int) -> int:
 
 
 def main():
+    # Windows consoles default to the system locale's codepage (e.g. cp949 on
+    # Korean Windows), not UTF-8 -- the port-fallback message below (and
+    # anything else printed to the real console, as opposed to a pack job's
+    # captured log) would otherwise raise UnicodeEncodeError on its first
+    # emoji. Guarded with hasattr since a piped/captured stream (tests) may
+    # not support reconfigure() at all.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="Ziplex GUI")
     parser.add_argument("--aif", default=None, help="시작 시 미리 채울 aif.json 경로")
     parser.add_argument("--project", default=None, help="시작 시 미리 채울 프로젝트 폴더 경로")
