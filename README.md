@@ -59,36 +59,27 @@ pip install -r requirement.txt        # note: filename has no "s"
 Add a `.env` with `GEMINI_API_KEY=...`, then:
 
 ```bash
-# Full pipeline: collect, scan, select, compress, summarize, correct
-python src/cli.py pack ./your-project/
-
-# Skip interactive file selection, include everything safe
-python src/cli.py pack ./your-project/ --auto
-
-# Skip interactive correction, auto-accept whatever the LLM produced
-python src/cli.py pack ./your-project/ --auto-correct
-
-# Fully non-interactive (CI, scripted runs) -- file selection and correction
-# are independent flags, so any combination of the two works
-python src/cli.py pack ./your-project/ --auto --auto-correct
-
-# Custom output path (writes out.json + out.detail.json)
-python src/cli.py pack ./your-project/ -o output/out.json
-
-# Force-resummarize every file, ignoring any previous pack found on disk
-python src/cli.py pack ./your-project/ --no-cache
-
-# Scope to just what you want packed -- a one-off flag, or persisted below
-python src/cli.py pack ./your-project/ --include "src/**/*.py,*.md" --ignore "**/*.generated.*"
-
-# CI guard: exit code 1 if the packed payload exceeds 50,000 GPT-4o tokens
-python src/cli.py pack ./your-project/ --auto --auto-correct --max-tokens 50000
-
-# No GEMINI_API_KEY at all -- structural summaries only, no rules/AI guide
-python src/cli.py pack ./your-project/ --auto --no-llm
+python src/cli.py pack ./your-project/                        # full pipeline, interactive
+python src/cli.py pack ./your-project/ --auto --auto-correct  # fully non-interactive (CI, scripted runs)
 ```
 
-Re-running `pack` on a project you've packed before only re-summarizes files that actually changed (by content hash) — everything else reuses its previous summary instead of another LLM call.
+`--auto` (skip interactive file selection) and `--auto-correct` (skip interactive correction) are independent, so any combination of the two works. Re-running `pack` on a project you've packed before only re-summarizes files that actually changed (by content hash) — everything else reuses its previous summary instead of another LLM call.
+
+<details>
+<summary>Every <code>pack</code> flag</summary>
+
+| Flag | Effect |
+|---|---|
+| `--auto` | Skip interactive file selection, include everything safe |
+| `--auto-correct` | Skip interactive correction, auto-accept whatever the LLM produced |
+| `-o, --output <path>` | Custom output path (writes `<path>` + sibling `.detail.json`/`.cache.json`) |
+| `--no-cache` | Force-resummarize every file, ignoring any previous pack found on disk |
+| `--include <patterns>` | Only pack files matching these comma-separated globs, on top of `.ziplex.json` (below) |
+| `--ignore <patterns>` | Additionally exclude these comma-separated globs, on top of `.ziplex.json` |
+| `--max-tokens N` (+ `--max-tokens-model M`) | CI guard: exit code 1 if the packed payload exceeds `N` tokens for model `M` (default GPT-4o) |
+| `--no-llm` | No `GEMINI_API_KEY`/network at all — structural summaries only, `rules`/AI guide skipped |
+
+</details>
 
 ### Config file
 
@@ -180,6 +171,7 @@ claude mcp add ziplex -- python src/mcp_server.py      # register with Claude Co
 |---|---|
 | `get_overview(aif_path, project_path?)` | Project guide, coding rules, token stats — call this first |
 | `list_files(aif_path, project_path?)` | Every file mapped to its summary + confidence score |
+| `get_relationships(aif_path)` | The whole dependency graph at once — every file's internal/external edges |
 | `get_dependents(aif_path, file)` | Files that directly depend on `file` |
 | `get_blast_radius(aif_path, file)` | Every file transitively affected by a change to `file` |
 | `get_detail(aif_path, file, start_line?, end_line?)` | A file's compressed source, in full or by line range |
@@ -200,9 +192,9 @@ python src/gui/gui_server.py --aif out.json --project ./your-project/   # prefil
 python src/gui/gui_server.py --no-window                                # plain browser tab instead
 ```
 
-**Pack from the GUI** — pick a project folder with the native folder picker, check off which files to include (the same safe/dangerous split `collect`'s security scan produces), and watch the pack run in the background. Analysis pauses for review before anything is saved: edit the project name, guide, rules, and per-file summaries (only the low-confidence ones are flagged, same triage the CLI uses), and adjust the dependency graph by linking or unlinking individual edges — a file with more than one real parent keeps its other references intact.
+**Pack from the GUI** — pick a project folder with the native folder picker, check off which files to include (the same safe/dangerous split `collect`'s security scan produces), optionally check "no LLM" (`pack --no-llm`'s GUI equivalent), and watch the pack run in the background. Analysis pauses for review before anything is saved: edit the project name, guide, rules, and per-file summaries (only the low-confidence ones are flagged, same triage the CLI uses). The dependency graph opens as a collapsible whole-tree overview first — click a file's name once you've spotted one worth fixing to drop into an edit view for just that file, linking or unlinking individual edges (a file with more than one real parent keeps its other references intact).
 
-**Browse an existing pack** — the same overview/files/dependents/blast-radius/detail/search views the MCP server exposes, as web pages instead of MCP tool calls. Each page has a Copy button; the intended flow is looking around here and pasting what's useful into a separate AI chat by hand, not the GUI talking to that chat itself.
+**Browse an existing pack** — the same overview/files/relationships/detail/search views the MCP server exposes, as web pages instead of MCP tool calls. The Relationships page reuses the same whole-tree-then-edit-one-file flow packing uses, so a relationship noticed after the fact can be fixed without re-running the pipeline. Each page has a Copy button; the intended flow is looking around here and pasting what's useful into a separate AI chat by hand, not the GUI talking to that chat itself.
 
 Binds to `127.0.0.1` only — no `--host` flag, no way to expose it to a network.
 

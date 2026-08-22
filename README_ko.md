@@ -59,36 +59,27 @@ pip install -r requirement.txt        # 참고: 파일명에 "s"가 없습니다
 `.env`에 `GEMINI_API_KEY=...`를 추가한 뒤:
 
 ```bash
-# 전체 파이프라인: 수집, 스캔, 선택, 압축, 요약, 보정
-python src/cli.py pack ./your-project/
-
-# 파일을 직접 고르지 않고 안전한 파일 전체 포함
-python src/cli.py pack ./your-project/ --auto
-
-# 보정 단계 없이 LLM 결과를 그대로 사용
-python src/cli.py pack ./your-project/ --auto-correct
-
-# 완전 비대화형 실행 (CI, 스크립트용) -- 파일 선택과 보정은 서로 독립된
-# 옵션이라 둘을 마음대로 조합해서 써도 됩니다
-python src/cli.py pack ./your-project/ --auto --auto-correct
-
-# 출력 경로 지정 (out.json + out.detail.json이 함께 저장됨)
-python src/cli.py pack ./your-project/ -o output/out.json
-
-# 이전 pack 결과 무시하고 모든 파일 요약을 강제로 다시 생성
-python src/cli.py pack ./your-project/ --no-cache
-
-# 패킹 범위를 원하는 만큼만 -- 한 번만 쓸 거면 플래그로, 계속 쓸 거면 아래 설정 파일로
-python src/cli.py pack ./your-project/ --include "src/**/*.py,*.md" --ignore "**/*.generated.*"
-
-# CI 가드: 패킹 결과가 GPT-4o 기준 50,000 토큰을 넘으면 종료 코드 1
-python src/cli.py pack ./your-project/ --auto --auto-correct --max-tokens 50000
-
-# GEMINI_API_KEY 없이 -- 구조 정보만으로 요약, rules/AI 가이드 없음
-python src/cli.py pack ./your-project/ --auto --no-llm
+python src/cli.py pack ./your-project/                        # 전체 파이프라인, 대화형
+python src/cli.py pack ./your-project/ --auto --auto-correct  # 완전 비대화형 (CI, 스크립트용)
 ```
 
-전에 한 번 pack한 프로젝트를 다시 pack하면, 실제로 내용이 바뀐 파일(콘텐츠 해시 기준)만 다시 요약합니다 — 나머지는 이전 요약을 그대로 재사용해서 LLM을 다시 호출하지 않습니다.
+`--auto`(대화형 파일 선택 생략)와 `--auto-correct`(대화형 보정 생략)는 서로 독립된 옵션이라 마음대로 조합해서 써도 됩니다. 전에 한 번 pack한 프로젝트를 다시 pack하면, 실제로 내용이 바뀐 파일(콘텐츠 해시 기준)만 다시 요약합니다 — 나머지는 이전 요약을 그대로 재사용해서 LLM을 다시 호출하지 않습니다.
+
+<details>
+<summary><code>pack</code>의 모든 플래그</summary>
+
+| 플래그 | 효과 |
+|---|---|
+| `--auto` | 대화형 파일 선택 생략, 안전한 파일 전체 포함 |
+| `--auto-correct` | 대화형 보정 생략, LLM 결과를 그대로 사용 |
+| `-o, --output <path>` | 출력 경로 지정 (`<path>` + `.detail.json`/`.cache.json`이 함께 저장됨) |
+| `--no-cache` | 이전 pack 결과 무시하고 모든 파일 요약을 강제로 다시 생성 |
+| `--include <patterns>` | `.ziplex.json`(아래)에 더해, 쉼표로 구분한 glob 패턴에 맞는 파일만 포함 |
+| `--ignore <patterns>` | `.ziplex.json`에 더해, 쉼표로 구분한 glob 패턴을 추가로 제외 |
+| `--max-tokens N` (+ `--max-tokens-model M`) | CI 가드: 패킹 결과가 모델 `M`(기본 GPT-4o) 기준 `N` 토큰을 넘으면 종료 코드 1 |
+| `--no-llm` | `GEMINI_API_KEY`/네트워크 전혀 불필요 — 구조 정보만으로 요약, `rules`/AI 가이드 생략 |
+
+</details>
 
 ### 설정 파일
 
@@ -179,6 +170,7 @@ claude mcp add ziplex -- python src/mcp_server.py      # Claude Code에 등록 (
 |---|---|
 | `get_overview(aif_path, project_path?)` | 프로젝트 가이드, 코딩 룰, 토큰 통계 — 가장 먼저 호출하면 됩니다 |
 | `list_files(aif_path, project_path?)` | 모든 파일을 요약 + 신뢰도 점수와 함께 매핑 |
+| `get_relationships(aif_path)` | 전체 의존성 그래프를 한 번에 — 모든 파일의 내부/외부 엣지 |
 | `get_dependents(aif_path, file)` | `file`을 직접 의존하는 파일들 |
 | `get_blast_radius(aif_path, file)` | `file`이 바뀌면 직간접적으로 영향받는 모든 파일 |
 | `get_detail(aif_path, file, start_line?, end_line?)` | 파일의 압축 소스, 전체 또는 줄 범위로 |
@@ -199,9 +191,9 @@ python src/gui/gui_server.py --aif out.json --project ./your-project/   # 시작
 python src/gui/gui_server.py --no-window                                # 창 대신 일반 브라우저 탭
 ```
 
-**GUI에서 패킹하기** — 네이티브 폴더 선택창으로 프로젝트 폴더를 고르고, 어떤 파일을 포함할지 체크박스로 고른 뒤(`collect`의 보안 스캔이 만드는 것과 같은 safe/dangerous 구분), 백그라운드에서 돌아가는 패킹 과정을 지켜봅니다. 분석이 끝나면 저장 전에 검토 단계에서 멈춥니다 — 프로젝트 이름, 가이드, 룰, 파일별 요약을 고칠 수 있고(CLI와 같은 기준으로 신뢰도가 낮은 것만 검토 대상으로 표시됩니다), 의존성 그래프도 엣지 하나하나를 잇거나 끊는 방식으로 조정할 수 있습니다 — 부모가 여러 개인 파일이라도 다른 참조는 그대로 남습니다.
+**GUI에서 패킹하기** — 네이티브 폴더 선택창으로 프로젝트 폴더를 고르고, 어떤 파일을 포함할지 체크박스로 고른 뒤(`collect`의 보안 스캔이 만드는 것과 같은 safe/dangerous 구분), 원하면 "LLM 사용 안 함"(`pack --no-llm`의 GUI 버전)도 체크하고, 백그라운드에서 돌아가는 패킹 과정을 지켜봅니다. 분석이 끝나면 저장 전에 검토 단계에서 멈춥니다 — 프로젝트 이름, 가이드, 룰, 파일별 요약을 고칠 수 있고(CLI와 같은 기준으로 신뢰도가 낮은 것만 검토 대상으로 표시됩니다), 의존성 그래프는 먼저 접었다 펼 수 있는 전체 트리로 보여줍니다 — 고칠 파일을 발견하면 그 파일 이름을 클릭해 엣지 하나하나를 잇거나 끊는 편집 화면으로 들어갑니다 (부모가 여러 개인 파일이라도 다른 참조는 그대로 남습니다).
 
-**기존 pack 둘러보기** — MCP 서버가 노출하는 overview/files/dependents/blast-radius/detail/search 뷰를 MCP 툴 호출 대신 웹 페이지로 그대로 씁니다. 각 페이지엔 복사 버튼이 있고, 의도된 흐름은 여기서 둘러본 다음 필요한 내용을 별도의 AI 챗에 직접 붙여넣는 것입니다 — GUI가 그 챗과 직접 통신하지는 않습니다.
+**기존 pack 둘러보기** — MCP 서버가 노출하는 overview/files/relationships/detail/search 뷰를 MCP 툴 호출 대신 웹 페이지로 그대로 씁니다. Relationships 페이지는 패킹 때와 같은 "전체 트리 먼저, 파일 하나 편집은 그다음" 흐름을 그대로 써서, 패킹이 끝난 뒤에 발견한 관계 문제도 파이프라인을 다시 돌리지 않고 고칠 수 있습니다. 각 페이지엔 복사 버튼이 있고, 의도된 흐름은 여기서 둘러본 다음 필요한 내용을 별도의 AI 챗에 직접 붙여넣는 것입니다 — GUI가 그 챗과 직접 통신하지는 않습니다.
 
 `127.0.0.1`에만 바인딩됩니다 — `--host` 옵션이 없고, 네트워크에 노출할 방법도 없습니다.
 
