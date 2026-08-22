@@ -208,6 +208,7 @@ function renderLanding() {
   const packProjInput = el("input", { type: "text", placeholder: "예: C:\\path\\to\\my-project" });
   const packOutInput = el("input", { type: "text", placeholder: "선택. 비우면 result/<프로젝트명>.json" });
   const noCacheInput = el("input", { type: "checkbox" });
+  const noLlmInput = el("input", { type: "checkbox" });
   const packError = el("div", { class: "error hidden" });
   const loadFilesButton = el("button", { class: "secondary", text: "파일 목록 불러오기" });
   const fileListBox = el("div", { class: "hidden" });
@@ -276,6 +277,7 @@ function renderLanding() {
         project_path,
         output_path: packOutInput.value.trim(),
         no_cache: noCacheInput.checked,
+        no_llm: noLlmInput.checked,
         selected_files,
       });
       location.hash = `#/pack/${job_id}`;
@@ -296,6 +298,10 @@ function renderLanding() {
     el("label", { style: "display:flex;align-items:center;gap:6px;margin-top:14px" }, [
       noCacheInput,
       el("span", { text: "이전 pack 캐시 무시 (변경 없는 파일도 전체 재요약)" }),
+    ]),
+    el("label", { style: "display:flex;align-items:center;gap:6px;margin-top:6px" }, [
+      noLlmInput,
+      el("span", { text: "LLM 사용 안 함 (GEMINI_API_KEY 불필요 -- 요약은 시그니처/의존성만으로 자동 생성, 코딩 룰/AI 가이드 생략)" }),
     ]),
     el("div", { class: "copy-row" }, loadFilesButton),
     fileListBox,

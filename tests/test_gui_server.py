@@ -202,6 +202,32 @@ def test_api_pack_runs_end_to_end_with_mock_provider(client, tmp_path, monkeypat
     assert client.get("/api/pack/review", query_string={"job_id": job_id}).status_code == 404
 
 
+def test_api_pack_no_llm_flag_reaches_pack_service(client, tmp_path, monkeypatch):
+    # Route-level check that the "no_llm" checkbox's value actually reaches
+    # pack_service.start_pack_job() -- pack_service.py's own test suite
+    # covers the resulting structural-summary behavior in detail.
+    class _RaisingProvider(llm.MockProvider):
+        def generate(self, prompt: str, retry: int = 5) -> str:
+            raise AssertionError("no_llm=True must never call the LLM provider")
+
+    monkeypatch.setattr(llm, "_provider", _RaisingProvider())
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+    start = client.post("/api/pack", json={
+        "project_path": str(project), "selected_files": ["main.py"], "no_llm": True,
+    })
+    job_id = start.get_json()["job_id"]
+
+    status = _wait_for_job(client, job_id)
+    assert status["state"] == "reviewing"
+    review = client.get("/api/pack/review", query_string={"job_id": job_id}).get_json()
+    assert review["project"]["prompt"] == packager.STRUCTURAL_ONLY_NOTE
+
+
 def test_api_pack_link_adds_an_edge_and_rejects_cycles(client, tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_provider", llm.MockProvider())
     monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoint")

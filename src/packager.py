@@ -403,11 +403,28 @@ def pack(
     return aif
 
 
+def resolve_output_path(aif: dict, output_path: str | None) -> Path:
+    """The path save_aif() will write aif.json to -- result/<project name>
+    .json if output_path isn't given, otherwise output_path itself --
+    factored out (no directory-creation or write side effects here, unlike
+    save_aif() itself) so a caller that needs to know the destination
+    *before* calling save_aif() can compute it identically instead of
+    keeping its own copy of this fallback that could silently drift from
+    save_aif()'s. gui/pack_service.py's submit_review() is exactly that
+    caller: it locks this same path (see _lock_for_path()'s own comment)
+    against a concurrent edit before finalizing and saving to it.
+    """
+    if output_path is None:
+        return RESULT_DIR / f"{aif['project']['name']}.json"
+    return Path(output_path)
+
+
 def save_aif(aif: dict, output_path: str | None = None) -> None:
     """Writes the AIF result to output_path, or to result/<project name>.json if
-    output_path isn't given — mirroring checkpoint.CHECKPOINT_DIR, anchored to
-    the repo root rather than the caller's cwd, so `pack` writes to the same
-    place regardless of where it's invoked from.
+    output_path isn't given (see resolve_output_path()) — mirroring
+    checkpoint.CHECKPOINT_DIR, anchored to the repo root rather than the
+    caller's cwd, so `pack` writes to the same place regardless of where
+    it's invoked from.
 
     Splits two things out of `aif` into sibling files, keyed the same way as
     `files`:
@@ -423,12 +440,8 @@ def save_aif(aif: dict, output_path: str | None = None) -> None:
       compare against later -- not part of aif.json itself, since it's
       packaging-internal bookkeeping an AI reading the project has no use for.
     """
-    if output_path is None:
-        RESULT_DIR.mkdir(exist_ok=True)
-        output_path = RESULT_DIR / f"{aif['project']['name']}.json"
-    else:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = resolve_output_path(aif, output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     manifest = aif.get("_manifest")
 
