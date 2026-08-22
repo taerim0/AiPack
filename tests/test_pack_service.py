@@ -7,6 +7,7 @@ test_pack_integration.py.
 """
 
 import json
+import threading
 import time
 
 import pytest
@@ -590,3 +591,61 @@ def test_unlink_saved_relationship_removes_only_that_edge(tmp_path):
 
     saved = json.loads(aif_path.read_text(encoding="utf-8"))
     assert saved["relationships"]["a.py"]["internal"] == ["c.py"]
+
+
+def test_lock_for_path_returns_the_same_lock_for_equivalent_paths(tmp_path):
+    aif_path = tmp_path / "sample.json"
+    aif_path.write_text("{}", encoding="utf-8")
+
+    absolute = pack_service._lock_for_path(str(aif_path))
+    relative_equivalent = pack_service._lock_for_path(str(aif_path.parent) + f"/./{aif_path.name}")
+    assert absolute is relative_equivalent
+
+
+def test_lock_for_path_returns_different_locks_for_different_paths(tmp_path):
+    a = pack_service._lock_for_path(str(tmp_path / "a.json"))
+    b = pack_service._lock_for_path(str(tmp_path / "b.json"))
+    assert a is not b
+
+
+def test_link_saved_relationship_is_safe_under_concurrent_writes(tmp_path):
+    # Found by code review: link_saved_relationship()'s read-modify-write
+    # had no guard against two calls racing on the same file, unlike every
+    # job mutation in this module (see _lock_for_path()'s own comment).
+    # Two threads each add a *different* edge on the *same* aif.json,
+    # repeatedly -- without the lock, a lost update (one thread's write
+    # clobbering the other's read-modify-write in flight) would eventually
+    # drop one side's edge. Repeats several rounds since a race is
+    # timing-dependent and might not surface on a single attempt.
+    aif_path = tmp_path / "sample.json"
+
+    for round_num in range(20):
+        _write_saved_aif(aif_path, {
+            "a.py": {"internal": [], "external": []},
+            "b.py": {"internal": [], "external": []},
+            "c.py": {"internal": [], "external": []},
+        })
+
+        errors = []
+
+        def link_b():
+            try:
+                pack_service.link_saved_relationship(str(aif_path), "a.py", "b.py")
+            except Exception as e:  # pragma: no cover -- surfaced via `errors`
+                errors.append(e)
+
+        def link_c():
+            try:
+                pack_service.link_saved_relationship(str(aif_path), "a.py", "c.py")
+            except Exception as e:  # pragma: no cover
+                errors.append(e)
+
+        t1, t2 = threading.Thread(target=link_b), threading.Thread(target=link_c)
+        t1.start(); t2.start()
+        t1.join(); t2.join()
+
+        assert not errors, f"round {round_num}: {errors}"
+        saved = json.loads(aif_path.read_text(encoding="utf-8"))
+        assert sorted(saved["relationships"]["a.py"]["internal"]) == ["b.py", "c.py"], (
+            f"round {round_num}: lost an update -- {saved['relationships']['a.py']}"
+        )

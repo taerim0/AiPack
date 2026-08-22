@@ -173,6 +173,36 @@ def api_pack_review():
     return jsonify(review)
 
 
+def _relationship_edit_route(id_field: str, result_key: str, fn):
+    """Shared body for the four link/unlink routes below (job-based:
+    api_pack_link/api_pack_unlink, and saved-file-based:
+    api_relationships_link/api_relationships_unlink): parse
+    {id_field, file, target} from the JSON body, call
+    fn(id_value, file_name, target), and map CycleError/ValueError to the
+    same 409/404 status every one of the four already used. Kept in one
+    place instead of copied four times so a future change to that mapping
+    (a new exception type, a different status code) can't be made in three
+    of the four spots and missed in the fourth. remove_dependency_in_job()/
+    unlink_saved_relationship() never actually raise CycleError (removing
+    an edge can't create one) -- catching it for the unlink routes too is a
+    harmless no-op branch, not a behavior change from before this was
+    factored out.
+    """
+    data = request.get_json(silent=True) or {}
+    id_value = data.get(id_field)
+    file_name = data.get("file")
+    target = data.get("target")
+    if not id_value or not file_name or not target:
+        return jsonify({"error": f"{id_field}, file, target가 모두 필요합니다"}), 400
+    try:
+        result = fn(id_value, file_name, target)
+    except CycleError as e:
+        return jsonify({"error": str(e)}), 409
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    return jsonify({result_key: result})
+
+
 @app.route("/api/pack/link", methods=["POST"])
 def api_pack_link():
     """Relationship-editor "link" endpoint: adds the dependency edge `file`
@@ -180,19 +210,7 @@ def api_pack_link():
     pack_service.add_dependency_in_job() -- only `file`'s own edges change,
     unlike the drag-and-drop reparenting this replaced.
     """
-    data = request.get_json(silent=True) or {}
-    job_id = data.get("job_id")
-    file_name = data.get("file")
-    target = data.get("target")
-    if not job_id or not file_name or not target:
-        return jsonify({"error": "job_id, file, target가 모두 필요합니다"}), 400
-    try:
-        tree = pack_service.add_dependency_in_job(job_id, file_name, target)
-    except CycleError as e:
-        return jsonify({"error": str(e)}), 409
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
-    return jsonify({"tree": tree})
+    return _relationship_edit_route("job_id", "tree", pack_service.add_dependency_in_job)
 
 
 @app.route("/api/pack/unlink", methods=["POST"])
@@ -201,17 +219,7 @@ def api_pack_unlink():
     `file` -> `target` in a "reviewing" job and returns the recomputed tree.
     See pack_service.remove_dependency_in_job().
     """
-    data = request.get_json(silent=True) or {}
-    job_id = data.get("job_id")
-    file_name = data.get("file")
-    target = data.get("target")
-    if not job_id or not file_name or not target:
-        return jsonify({"error": "job_id, file, target가 모두 필요합니다"}), 400
-    try:
-        tree = pack_service.remove_dependency_in_job(job_id, file_name, target)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
-    return jsonify({"tree": tree})
+    return _relationship_edit_route("job_id", "tree", pack_service.remove_dependency_in_job)
 
 
 @app.route("/api/pack/finalize", methods=["POST"])
@@ -283,19 +291,7 @@ def api_relationships_link():
     -- see pack_service.link_saved_relationship() for why this can't just
     reuse the pack/link path.
     """
-    data = request.get_json(silent=True) or {}
-    aif_path = data.get("aif_path")
-    file_name = data.get("file")
-    target = data.get("target")
-    if not aif_path or not file_name or not target:
-        return jsonify({"error": "aif_path, file, target가 모두 필요합니다"}), 400
-    try:
-        relationships = pack_service.link_saved_relationship(aif_path, file_name, target)
-    except CycleError as e:
-        return jsonify({"error": str(e)}), 409
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
-    return jsonify({"relationships": relationships})
+    return _relationship_edit_route("aif_path", "relationships", pack_service.link_saved_relationship)
 
 
 @app.route("/api/relationships/unlink", methods=["POST"])
@@ -303,17 +299,7 @@ def api_relationships_unlink():
     """Post-pack counterpart to /api/pack/unlink. See
     pack_service.unlink_saved_relationship().
     """
-    data = request.get_json(silent=True) or {}
-    aif_path = data.get("aif_path")
-    file_name = data.get("file")
-    target = data.get("target")
-    if not aif_path or not file_name or not target:
-        return jsonify({"error": "aif_path, file, target가 모두 필요합니다"}), 400
-    try:
-        relationships = pack_service.unlink_saved_relationship(aif_path, file_name, target)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
-    return jsonify({"relationships": relationships})
+    return _relationship_edit_route("aif_path", "relationships", pack_service.unlink_saved_relationship)
 
 
 @app.route("/api/dependents")
